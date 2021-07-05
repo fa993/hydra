@@ -17,6 +17,7 @@ public class SocketReceiverConnection implements ReceiverConnection {
     public SocketReceiverConnection(String myServerURL) {
         try {
             this.serverURL = new URL(myServerURL);
+            this.serverSocket = new ServerSocket(this.serverURL.getPort(), 1000, InetAddress.getByName(this.serverURL.getHost()));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -27,7 +28,6 @@ public class SocketReceiverConnection implements ReceiverConnection {
         //TODO fix this
         try {
             long t1 = System.currentTimeMillis();
-            this.serverSocket = new ServerSocket(this.serverURL.getPort(), 1000, InetAddress.getByName(this.serverURL.getHost()));
             this.serverSocket.setSoTimeout(timeout);
             Socket so = this.serverSocket.accept();
             BufferedReader str = new BufferedReader(new InputStreamReader(so.getInputStream()));
@@ -35,7 +35,6 @@ public class SocketReceiverConnection implements ReceiverConnection {
             so.getOutputStream().write(0);
             so.getOutputStream().flush();
             so.close();
-            this.serverSocket.close();
             if (collection.length() <= 1) {
                 return receive(timeout - Long.valueOf(System.currentTimeMillis() - t1).intValue());
             } else {
