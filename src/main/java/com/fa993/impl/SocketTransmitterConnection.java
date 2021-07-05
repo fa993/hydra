@@ -28,9 +28,9 @@ public class SocketTransmitterConnection implements TransmitterConnection {
             URL urlTo = new URL(serverURL);
             Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
-            writer.write(Utils.obm.writeValueAsString(state));
+            writer.write(Utils.obm.writeValueAsString(state) + "\n");
             writer.flush();
-            writer.close();
+//            writer.close();
             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             boolean bl = reader.readLine().charAt(0) == '0';
             socket.close();
@@ -49,10 +49,9 @@ public class SocketTransmitterConnection implements TransmitterConnection {
         try {
             URL urlTo = new URL(serverURL);
             Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
-            socket.getOutputStream().close();
+            new BufferedWriter(new OutputStreamWriter(socket.getOutputStream())).write("a\n");
             InputStreamReader isr = new InputStreamReader(socket.getInputStream());
             boolean bl = isr.read() == 0;
-            isr.close();
             socket.close();
             return bl;
         } catch (IOException e) {

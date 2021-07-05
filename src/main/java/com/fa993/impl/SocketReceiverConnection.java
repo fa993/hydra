@@ -31,7 +31,7 @@ public class SocketReceiverConnection implements ReceiverConnection {
             this.serverSocket.setSoTimeout(timeout);
             Socket so = this.serverSocket.accept();
             BufferedReader str = new BufferedReader(new InputStreamReader(so.getInputStream()));
-            String collection = str.lines().collect(Collectors.joining(System.lineSeparator()));
+            String collection = str.readLine();
             so.getOutputStream().write(0);
             so.getOutputStream().flush();
             so.close();
