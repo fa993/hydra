@@ -114,34 +114,34 @@ public class Engine {
     }
 
     public void run() {
-        Thread t1 = new Thread(() -> {
-            while (!stopTransmitting || orders.size() > 0) {
-                WorkOrder order = this.orders.poll();
-                if (order == null) {
-                } else if (order.executeAfter.isAfter(Instant.now())) {
-                    this.orders.add(order);
-                } else {
-                    boolean found = false;
-                    Server n = this.reordered;
-                    String x = Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
-//                    while (!this.provider.getTransmitter().isUp(n.getServerURl())) {
-//                        n = n.getNext();
+//        Thread t1 = new Thread(() -> {
+//            while (!stopTransmitting || orders.size() > 0) {
+//                WorkOrder order = this.orders.poll();
+//                if (order == null) {
+//                } else if (order.executeAfter.isAfter(Instant.now())) {
+//                    this.orders.add(order);
+//                } else {
+//                    boolean found = false;
+//                    Server n = this.reordered;
+//                    String x = Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
+////                    while (!this.provider.getTransmitter().isUp(n.getServerURl())) {
+////                        n = n.getNext();
+////                    }
+////                    String x = n.getServerURl();
+//                    if(x.equals(this.reordered.getServerURL())){
+//
+//                    } else {
+//                        this.provider.getTransmitter().send(x, order.associatedState);
 //                    }
-//                    String x = n.getServerURl();
-                    if(x.equals(this.reordered.getServerURL())){
-                        
-                    } else {
-                        this.provider.getTransmitter().send(x, order.associatedState);
-                    }
-                }
-                try {
-                    Thread.sleep(1);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
-        t1.setDaemon(true);
+//                }
+//                try {
+//                    Thread.sleep(1);
+//                } catch (InterruptedException e) {
+//                    e.printStackTrace();
+//                }
+//            }
+//        });
+//        t1.setDaemon(true);
         Thread t2 = new Thread(() -> {
             while (!stopReceiving) {
                 Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout);
@@ -150,18 +150,21 @@ public class Engine {
                     if (this.lastSeenState.equals(newState)) {
                         //theOneTrueKingIsYouAgain()
                         this.lastSeenState = newState.reissue();
-
-                        this.orders.add(new WorkOrder(Instant.now().plusMillis(this.heartbeatDelay), this.lastSeenState));
+                        try {
+                            Thread.sleep(this.heartbeatDelay);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
                     } else {
                         //theOneTrueKingIsNotYou()
                         this.lastSeenState = newState;
-                        this.orders.add(new WorkOrder(Instant.now(), this.lastSeenState));
                     }
+                    this.provider.getTransmitter().send(findFirstActiveServer(), this.lastSeenState);
                 } else {
                     //theOneTrueKingIsYou();
                     if (!this.stopReceiving) {
                         this.lastSeenState = this.lastSeenState.reissue(this.reordered.getServerURL());
-                        this.orders.add(new WorkOrder(Instant.now(), this.lastSeenState));
+                        this.provider.getTransmitter().send(findFirstActiveServer(), this.lastSeenState);
                     }
                 }
                 this.lastActiveTime = Instant.now();
@@ -171,6 +174,11 @@ public class Engine {
         t2.setDaemon(true);
 //        t1.start();
         t2.start();
+    }
+
+    private String findFirstActiveServer() {
+        Server n = this.reordered;
+        return Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
     }
 
 }
