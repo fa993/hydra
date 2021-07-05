@@ -14,6 +14,9 @@ public class State {
 
     private Map<String, Object> contents;
 
+    public State() {
+    }
+
     public State(String ownerURL, Map<String, Object> contents) {
         this.stateId = Utils.newId();
         this.ownerURL = ownerURL;

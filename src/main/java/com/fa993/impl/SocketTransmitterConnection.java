@@ -30,11 +30,7 @@ public class SocketTransmitterConnection implements TransmitterConnection {
             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
             writer.write(Utils.obm.writeValueAsString(state) + "\n");
             writer.flush();
-//            writer.close();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            boolean bl = reader.readLine().charAt(0) == '0';
-            socket.close();
-            return bl;
+            return true;
         } catch (IOException e) {
             e.printStackTrace();
             return false;

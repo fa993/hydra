@@ -32,14 +32,8 @@ public class SocketReceiverConnection implements ReceiverConnection {
             Socket so = this.serverSocket.accept();
             BufferedReader str = new BufferedReader(new InputStreamReader(so.getInputStream()));
             String collection = str.readLine();
-            so.getOutputStream().write(0);
-            so.getOutputStream().flush();
             so.close();
-            if (collection.length() <= 1) {
-                return receive(timeout - Long.valueOf(System.currentTimeMillis() - t1).intValue());
-            } else {
-                return Optional.ofNullable(Utils.obm.readValue(collection, State.class));
-            }
+            return Optional.ofNullable(Utils.obm.readValue(collection, State.class));
         } catch (Exception e) {
             e.printStackTrace();
             return Optional.empty();
