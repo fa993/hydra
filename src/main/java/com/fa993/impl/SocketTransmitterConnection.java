@@ -24,16 +24,20 @@ public class SocketTransmitterConnection implements TransmitterConnection {
         if (serverURL.equals(myServer)) {
             return true;
         }
+        boolean bl = false;
         try {
             URL urlTo = new URL(serverURL);
             Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
             writer.write(Utils.obm.writeValueAsString(state) + "\n");
             writer.flush();
-            return true;
-        } catch (IOException e) {
+            bl = true;
+            while (!socket.isClosed()) {
+                Thread.sleep(10);
+            }
+        } catch (Exception e) {
             e.printStackTrace();
-            return false;
         }
+        return bl;
     }
 }
