@@ -11,10 +11,14 @@ import java.net.*;
 public class SocketTransmitterConnection implements TransmitterConnection {
 
     private URL myServerURL;
+    private String myServer;
+    private int sendPort;
 
-    public SocketTransmitterConnection(String myServerURL) {
+    public SocketTransmitterConnection(String myServerURL, int sendPort) {
         try {
+            this.myServer = myServerURL;
             this.myServerURL = new URL(myServerURL);
+            this.sendPort = sendPort;
         } catch (MalformedURLException e) {
             e.printStackTrace();
         }
@@ -22,9 +26,12 @@ public class SocketTransmitterConnection implements TransmitterConnection {
 
     @Override
     public boolean send(String serverURL, State state) {
+        if(serverURL.equals(myServerURL)){
+            return true;
+        }
         try {
             URL urlTo = new URL(serverURL);
-            Socket socket = new Socket(this.myServerURL.getHost(), this.myServerURL.getPort(), InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
+            Socket socket = new Socket(this.myServerURL.getHost(), sendPort, InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
             writer.write(Utils.obm.writeValueAsString(state));
             writer.flush();
@@ -41,12 +48,12 @@ public class SocketTransmitterConnection implements TransmitterConnection {
 
     @Override
     public boolean isUp(String serverURL) {
-        if(serverURL.equals(myServerURL)){
+        if(serverURL.equals(myServer)){
             return true;
         }
         try {
             URL urlTo = new URL(serverURL);
-            Socket socket = new Socket(this.myServerURL.getHost(), this.myServerURL.getPort(), InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
+            Socket socket = new Socket(this.myServerURL.getHost(), sendPort, InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
             socket.getOutputStream().close();
             InputStreamReader isr = new InputStreamReader(socket.getInputStream());
             boolean bl = isr.read() == 0;
