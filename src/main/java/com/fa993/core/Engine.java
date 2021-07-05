@@ -85,12 +85,15 @@ public class Engine {
         } catch (ReflectiveOperationException e) {
             throw new InvalidConnectionProviderException(e);
         }
-        this.reordered = new Server(this.configs.getServers()[(this.configs.getCurrentServerIndex()) % this.configs.getServers().length]);
-        for (int i = 1; i <= this.configs.getServers().length; i++) {
+        Server og = new Server(this.configs.getServers()[(this.configs.getCurrentServerIndex()) % this.configs.getServers().length]);
+        this.reordered = og;
+        for (int i = 1; i < this.configs.getServers().length; i++) {
             Server n = new Server(this.configs.getServers()[(i + this.configs.getCurrentServerIndex()) % this.configs.getServers().length]);
             this.reordered.setNext(n);
             this.reordered = n;
         }
+        this.reordered.setNext(og);
+        this.reordered = og;
         this.connectionTimeout = (this.configs.getCurrentServerIndex() + 1) * this.configs.getCooldownTime();
         this.stopTransmitting = false;
         this.stopReceiving = false;
@@ -177,7 +180,7 @@ public class Engine {
     }
 
     private String findFirstActiveServer() {
-        Server n = this.reordered;
+        Server n = this.reordered.getNext();
         return Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
     }
 
