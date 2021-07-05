@@ -43,6 +43,8 @@ public class SocketReceiverConnection implements ReceiverConnection {
         } catch (Exception e) {
             e.printStackTrace();
             return Optional.empty();
+        } finally {
+
         }
     }
 }

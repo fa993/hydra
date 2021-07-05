@@ -12,7 +12,6 @@ import java.util.HashMap;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.stream.Stream;
 
 public class Engine {
 
@@ -54,7 +53,7 @@ public class Engine {
     }
 
     /**
-     * Note that this method guarantees at least one more pass through of the state object before it is taken out of the cluster
+     * Note that this method guarantees at least one more pass through of the state object through this cluster before this server is taken out of the cluster
      *
      * @throws EngineNotStartedException if the engine has not started yet
      */
@@ -127,10 +126,10 @@ public class Engine {
 //                    boolean found = false;
 //                    Server n = this.reordered;
 //                    String x = Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
-////                    while (!this.provider.getTransmitter().isUp(n.getServerURl())) {
-////                        n = n.getNext();
-////                    }
-////                    String x = n.getServerURl();
+//                    while (!this.provider.getTransmitter().isUp(n.getServerURl())) {
+//                        n = n.getNext();
+//                    }
+//                    String x = n.getServerURl();
 //                    if(x.equals(this.reordered.getServerURL())){
 //
 //                    } else {
@@ -162,12 +161,12 @@ public class Engine {
                         //theOneTrueKingIsNotYou()
                         this.lastSeenState = newState;
                     }
-                    this.provider.getTransmitter().send(findFirstActiveServer(), this.lastSeenState);
+                    sendToFirstActiveServer(this.lastSeenState);
                 } else {
                     //theOneTrueKingIsYou();
                     if (!this.stopReceiving) {
                         this.lastSeenState = this.lastSeenState.reissue(this.reordered.getServerURL());
-                        this.provider.getTransmitter().send(findFirstActiveServer(), this.lastSeenState);
+                        sendToFirstActiveServer(this.lastSeenState);
                     }
                 }
                 this.lastActiveTime = Instant.now();
@@ -179,9 +178,15 @@ public class Engine {
         t2.start();
     }
 
-    private String findFirstActiveServer() {
+    private void sendToFirstActiveServer(State state) {
         Server n = this.reordered.getNext();
-        return Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
+        while (!trySend(n.getServerURL(), state)) {
+            n = n.getNext();
+        }
+    }
+
+    private boolean trySend(String thisServer, State state) {
+        return this.provider.getTransmitter().send(thisServer, state);
     }
 
 }

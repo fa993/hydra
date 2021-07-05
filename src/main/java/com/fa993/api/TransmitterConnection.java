@@ -6,6 +6,4 @@ public interface TransmitterConnection {
 
     public boolean send(String serverURL, State state);
 
-    public boolean isUp(String serverURL);
-
 }

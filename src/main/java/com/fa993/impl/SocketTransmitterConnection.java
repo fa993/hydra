@@ -40,23 +40,4 @@ public class SocketTransmitterConnection implements TransmitterConnection {
             return false;
         }
     }
-
-    @Override
-    public boolean isUp(String serverURL) {
-        if (serverURL.equals(myServer)) {
-            return true;
-        }
-        try {
-            URL urlTo = new URL(serverURL);
-            Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
-            new BufferedWriter(new OutputStreamWriter(socket.getOutputStream())).write("a\n");
-            InputStreamReader isr = new InputStreamReader(socket.getInputStream());
-            boolean bl = isr.read() == 0;
-            socket.close();
-            return bl;
-        } catch (IOException e) {
-            e.printStackTrace();
-            return false;
-        }
-    }
 }
