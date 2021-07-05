@@ -19,16 +19,12 @@ public class Configuration {
     @JsonProperty("connection_provider")
     private String connectionProvider;
 
-    @JsonProperty("send_port")
-    private int sendPort;
-
     public Configuration() {
         this.servers = new String[0];
         this.currentServerIndex = 0;
         this.heartbeatTime = 10;
         this.cooldownTime = 100;
         this.connectionProvider = "com.fa993.impl.SocketConnectionProvider";
-        this.sendPort = 4587;
     }
 
     public String[] getServers() {
@@ -71,11 +67,4 @@ public class Configuration {
         this.connectionProvider = connectionProvider;
     }
 
-    public int getSendPort() {
-        return sendPort;
-    }
-
-    public void setSendPort(int sendPort) {
-        this.sendPort = sendPort;
-    }
 }
