@@ -4,6 +4,8 @@ import com.fa993.api.ConnectionProvider;
 import com.fa993.exceptions.*;
 import com.fa993.misc.Utils;
 import com.fasterxml.jackson.core.JsonParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -16,6 +18,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 
 public class Engine {
+
+    private static Logger logger = LoggerFactory.getLogger(Engine.class);
 
     private static Engine singleton;
 
@@ -177,9 +181,11 @@ public class Engine {
                 Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout);
                 if (st.isPresent()) {
                     State newState = st.get();
+                    logger.info("Received state: " + newState.toLog());
                     if (this.lastSeenState.equals(newState)) {
                         //theOneTrueKingIsYouAgain()
                         this.lastSeenState = newState.reissue();
+                        logger.info("Retained Primary: " + this.lastSeenState.toLog());
                         try {
                             Thread.sleep(this.heartbeatDelay);
                         } catch (InterruptedException e) {
@@ -188,13 +194,17 @@ public class Engine {
                     } else {
                         //theOneTrueKingIsNotYou()
                         this.lastSeenState = newState;
+                        logger.info("Not Primary");
                     }
                     sendToFirstActiveServer(this.lastSeenState);
+                    logger.info("Sent state");
                 } else {
                     //theOneTrueKingIsYou();
                     if (!this.stopReceiving) {
                         this.lastSeenState = this.lastSeenState.reissue(this.reordered.getServerURL());
+                        logger.info("Became Primary due to timeout: " + this.lastSeenState.toLog());
                         sendToFirstActiveServer(this.lastSeenState);
+                        logger.info("Sent state");
                     }
                 }
                 this.lastActiveTime = Instant.now();

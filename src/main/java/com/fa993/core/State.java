@@ -65,6 +65,10 @@ public class State {
         this.contents = contents;
     }
 
+    public String toLog() {
+        return "[" + stateId + ", " + ownerURL + "]";
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
