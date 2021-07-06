@@ -10,11 +10,12 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 public class Engine {
@@ -45,7 +46,17 @@ public class Engine {
 
     private Consumer<Map<String, String>> callback;
 
+    private Map<String, String> contents;
+
+    private ExecutorService executor = Executors.newSingleThreadExecutor((r) -> {
+        Thread t = new Thread(r);
+        t.setDaemon(true);
+        return t;
+    });
+
     /**
+     * Makes this server ready for insertion into the cluster
+     *
      * @param contents The initial contents object. Will only be persisted if this server is primary on start up
      * @param callback the callback which will be run when this server becomes primary
      * @throws NoConfigurationFileException        If there is no configuration file provided
@@ -62,6 +73,7 @@ public class Engine {
     }
 
     /**
+     * Prepares this server for removal from this cluster
      * Note that this method guarantees at least one more pass through of the state object through this cluster before this server is taken out of the cluster
      *
      * @throws EngineNotStartedException if the engine has not started yet
@@ -75,7 +87,9 @@ public class Engine {
     }
 
     /**
-     * @return the last seen {@link State} object
+     * Get the most recent contents object
+     *
+     * @return the contents object which may or may not have originated from this server
      * @throws EngineNotStartedException if the engine has not started yet
      */
     public static Map<String, String> contents() {
@@ -87,6 +101,8 @@ public class Engine {
     }
 
     /**
+     * Check if this server is primary
+     *
      * @return true if this server is the primary, false otherwise
      * @throws EngineNotStartedException if the engine has not started yet
      */
@@ -104,9 +120,22 @@ public class Engine {
      * @param callback The new callback when this server becomes primary
      * @throws EngineNotStartedException if the engine has not started yet
      */
-    public static void onPrimary(Consumer<Map<String, String>> callback){
+    public static void onPrimary(Consumer<Map<String, String>> callback) {
         if (singleton != null) {
             singleton.callback = callback;
+        } else {
+            throw new EngineNotStartedException();
+        }
+    }
+
+    /**
+     * Use this method to update the contents object to better reflect the state of this server
+     *
+     * @param contents the contents which will be passed to other servers if this server is primary
+     */
+    public static void pushContents(Map<String, String> contents) {
+        if (singleton != null) {
+            singleton.contents = contents;
         } else {
             throw new EngineNotStartedException();
         }
@@ -133,8 +162,13 @@ public class Engine {
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
         this.orders = new ConcurrentLinkedQueue<>();
-        this.lastSeenState = new State(this.reordered.getServerURL(), contents == null ? new HashMap<>() : contents);
-        this.callback = callback;
+        this.contents = contents;
+        if (callback != null) {
+            this.callback = callback;
+        } else {
+            this.callback = t -> {
+            };
+        }
     }
 
     public Configuration readConfigFile() throws NoConfigurationFileException, MalformedConfigurationFileException {
@@ -181,11 +215,12 @@ public class Engine {
                 Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout);
                 if (st.isPresent()) {
                     State newState = st.get();
-                    logger.info("Received state: " + newState.toLog());
-                    if (this.lastSeenState.equals(newState)) {
+                    logger.debug("Received state: " + newState.toLog());
+                    if (newState.equals(this.lastSeenState)) {
                         //theOneTrueKingIsYouAgain()
                         this.lastSeenState = newState.reissue();
-                        logger.info("Retained Primary: " + this.lastSeenState.toLog());
+                        this.lastSeenState.setContents(this.contents);
+                        logger.debug("Retained Primary: " + this.lastSeenState.toLog());
                         try {
                             Thread.sleep(this.heartbeatDelay);
                         } catch (InterruptedException e) {
@@ -194,17 +229,18 @@ public class Engine {
                     } else {
                         //theOneTrueKingIsNotYou()
                         this.lastSeenState = newState;
-                        logger.info("Not Primary");
+                        logger.debug("Not Primary");
                     }
-                    sendToFirstActiveServer(this.lastSeenState);
-                    logger.info("Sent state");
+                    String serverTo = sendToFirstActiveServer(this.lastSeenState);
+                    logger.debug("Sent state to " + serverTo);
                 } else {
                     //theOneTrueKingIsYou();
                     if (!this.stopReceiving) {
-                        this.lastSeenState = this.lastSeenState.reissue(this.reordered.getServerURL());
-                        logger.info("Became Primary due to timeout: " + this.lastSeenState.toLog());
-                        sendToFirstActiveServer(this.lastSeenState);
-                        logger.info("Sent state");
+                        this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
+                        logger.debug("Became Primary due to timeout: " + this.lastSeenState.toLog());
+                        String serverTo = sendToFirstActiveServer(this.lastSeenState);
+                        logger.debug("Sent state to " + serverTo);
+                        executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
                     }
                 }
                 this.lastActiveTime = Instant.now();
@@ -216,11 +252,12 @@ public class Engine {
         t2.start();
     }
 
-    private void sendToFirstActiveServer(State state) {
+    private String sendToFirstActiveServer(State state) {
         Server n = this.reordered.getNext();
         while (!trySend(n.getServerURL(), state)) {
             n = n.getNext();
         }
+        return n.getServerURL();
     }
 
     private boolean trySend(String thisServer, State state) {
