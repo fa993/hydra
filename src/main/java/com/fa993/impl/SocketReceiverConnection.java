@@ -27,18 +27,18 @@ public class SocketReceiverConnection implements ReceiverConnection {
     public Optional<State> receive(int timeout) {
         //TODO fix this
         try {
-            long t1 = System.currentTimeMillis();
             this.serverSocket.setSoTimeout(timeout);
             Socket so = this.serverSocket.accept();
+            so.setTcpNoDelay(true);
             BufferedReader str = new BufferedReader(new InputStreamReader(so.getInputStream()));
             String collection = str.readLine();
-            so.close();
+            BufferedWriter wr = new BufferedWriter(new OutputStreamWriter(so.getOutputStream()));
+            wr.write('0');
+            wr.flush();
             return Optional.ofNullable(Utils.obm.readValue(collection, State.class));
         } catch (Exception e) {
             e.printStackTrace();
             return Optional.empty();
-        } finally {
-
         }
     }
 }

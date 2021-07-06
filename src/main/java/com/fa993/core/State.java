@@ -12,12 +12,12 @@ public class State {
 
     private String ownerURL;
 
-    private Map<String, Object> contents;
+    private Map<String, String> contents;
 
     public State() {
     }
 
-    public State(String ownerURL, Map<String, Object> contents) {
+    public State(String ownerURL, Map<String, String> contents) {
         this.stateId = Utils.newId();
         this.ownerURL = ownerURL;
         this.contents = contents;
@@ -57,11 +57,11 @@ public class State {
         this.ownerURL = ownerURL;
     }
 
-    public Map<String, Object> getContents() {
+    public Map<String, String> getContents() {
         return contents;
     }
 
-    public void setContents(Map<String, Object> contents) {
+    public void setContents(Map<String, String> contents) {
         this.contents = contents;
     }
 

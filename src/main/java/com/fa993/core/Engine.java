@@ -9,9 +9,11 @@ import java.io.File;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 
 public class Engine {
 
@@ -37,15 +39,18 @@ public class Engine {
 
     private Queue<WorkOrder> orders;
 
+    private Consumer<Map<String, String>> callback;
+
     /**
-     * @param state - The initial state object {@link State}. As of now only the contents map is persisted and only if this server is the primary otherwise this object is ignored
+     * @param contents The initial contents object. Will only be persisted if this server is primary on start up
+     * @param callback the callback which will be run when this server becomes primary
      * @throws NoConfigurationFileException        If there is no configuration file provided
      * @throws MalformedConfigurationFileException If the configuration file is syntactically incorrect
      * @throws InvalidConnectionProviderException  If the ConnectionProvider is not matching the required specifications
      */
-    public synchronized static void start(State state) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
+    public synchronized static void start(Map<String, String> contents, Consumer<Map<String, String>> callback) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
         if (singleton == null) {
-            singleton = new Engine(state);
+            singleton = new Engine(contents, callback);
             singleton.run();
         } else {
             throw new MultipleEngineException();
@@ -69,15 +74,41 @@ public class Engine {
      * @return the last seen {@link State} object
      * @throws EngineNotStartedException if the engine has not started yet
      */
-    public static State state() {
+    public static Map<String, String> contents() {
         if (singleton != null) {
-            return new State(singleton.lastSeenState);
+            return singleton.lastSeenState.getContents();
         } else {
             throw new EngineNotStartedException();
         }
     }
 
-    private Engine(State state) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
+    /**
+     * @return true if this server is the primary, false otherwise
+     * @throws EngineNotStartedException if the engine has not started yet
+     */
+    public static boolean isPrimary() {
+        if (singleton != null) {
+            return singleton.lastSeenState.getOwnerURL().equals(singleton.reordered.getServerURL());
+        } else {
+            throw new EngineNotStartedException();
+        }
+    }
+
+    /**
+     * Only use this method if the callback may change dynamically, otherwise use the parameter in the constructor
+     *
+     * @param callback The new callback when this server becomes primary
+     * @throws EngineNotStartedException if the engine has not started yet
+     */
+    public static void onPrimary(Consumer<Map<String, String>> callback){
+        if (singleton != null) {
+            singleton.callback = callback;
+        } else {
+            throw new EngineNotStartedException();
+        }
+    }
+
+    private Engine(Map<String, String> contents, Consumer<Map<String, String>> callback) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
         this.configs = readConfigFile();
         try {
             this.provider = (ConnectionProvider) Class.forName(this.configs.getConnectionProvider()).getConstructor(Configuration.class).newInstance(this.configs);
@@ -98,11 +129,8 @@ public class Engine {
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
         this.orders = new ConcurrentLinkedQueue<>();
-        if (state != null) {
-            this.lastSeenState = state.reissue(this.reordered.getServerURL());
-        } else {
-            this.lastSeenState = new State(this.reordered.getServerURL(), new HashMap<>());
-        }
+        this.lastSeenState = new State(this.reordered.getServerURL(), contents == null ? new HashMap<>() : contents);
+        this.callback = callback;
     }
 
     public Configuration readConfigFile() throws NoConfigurationFileException, MalformedConfigurationFileException {
