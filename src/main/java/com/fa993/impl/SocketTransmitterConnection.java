@@ -10,7 +10,6 @@ import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.URL;
 
-//TODO idk if this class even works
 public class SocketTransmitterConnection implements TransmitterConnection {
 
     private String myServer;
