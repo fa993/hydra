@@ -21,9 +21,6 @@ public class SocketTransmitterConnection implements TransmitterConnection {
 
     @Override
     public boolean send(String serverURL, State state) {
-        if (serverURL.equals(myServer)) {
-            return true;
-        }
         try {
             URL urlTo = new URL(serverURL);
             Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());

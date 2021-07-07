@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
@@ -23,6 +24,11 @@ public class Engine {
     private static Logger logger = LoggerFactory.getLogger(Engine.class);
 
     private static Engine singleton;
+
+    private static final Consumer<Map<String, String>> DO_NOTHING = t -> {
+    };
+
+    private static final Map<String, String> EMPTY = new HashMap<>();
 
     private Configuration configs;
 
@@ -55,6 +61,38 @@ public class Engine {
     });
 
     /**
+     * Only use this method if you want to dynamically set the contents and the callback otherwise use {@link Engine#start(Map, Consumer)} which require the engine to be initialized but this server is not ready to be inserted into the cluster.
+     * Only use this method in conjunction with {@link Engine#on()}.
+     * Do not use {@link Engine#start(Map, Consumer)} with this
+     *
+     * @param contents The initial contents object. Will only be persisted if this server is primary on start up
+     * @param callback the callback which will be run when this server becomes primary
+     * @throws NoConfigurationFileException        If there is no configuration file provided
+     * @throws MalformedConfigurationFileException If the configuration file is syntactically incorrect
+     * @throws InvalidConnectionProviderException  If the ConnectionProvider is not matching the required specifications
+     */
+    public synchronized static void initialize(Map<String, String> contents, Consumer<Map<String, String>> callback) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
+        if (singleton == null) {
+            singleton = new Engine(contents, callback);
+        } else {
+            throw new MultipleEngineException();
+        }
+    }
+
+    /**
+     * Makes this server ready for insertion into the cluster
+     * Only use this method in conjunction with {@link Engine#initialize(Map, Consumer)}.
+     * Do not use {@link Engine#start(Map, Consumer)} with this
+     */
+    public static void on() {
+        if (singleton != null) {
+            singleton.run();
+        } else {
+            throw new EngineNotInitializedException();
+        }
+    }
+
+    /**
      * Makes this server ready for insertion into the cluster
      *
      * @param contents The initial contents object. Will only be persisted if this server is primary on start up
@@ -76,13 +114,13 @@ public class Engine {
      * Prepares this server for removal from this cluster
      * Note that this method guarantees at least one more pass through of the state object through this cluster before this server is taken out of the cluster
      *
-     * @throws EngineNotStartedException if the engine has not started yet
+     * @throws EngineNotInitializedException if the engine has not started yet
      */
     public static void stop() {
         if (singleton != null) {
             singleton.stopReceiving = true;
         } else {
-            throw new EngineNotStartedException();
+            throw new EngineNotInitializedException();
         }
     }
 
@@ -90,13 +128,13 @@ public class Engine {
      * Get the most recent contents object
      *
      * @return the contents object which may or may not have originated from this server
-     * @throws EngineNotStartedException if the engine has not started yet
+     * @throws EngineNotInitializedException if the engine has not started yet
      */
     public static Map<String, String> contents() {
         if (singleton != null) {
             return singleton.lastSeenState.getContents();
         } else {
-            throw new EngineNotStartedException();
+            throw new EngineNotInitializedException();
         }
     }
 
@@ -104,13 +142,13 @@ public class Engine {
      * Check if this server is primary
      *
      * @return true if this server is the primary, false otherwise
-     * @throws EngineNotStartedException if the engine has not started yet
+     * @throws EngineNotInitializedException if the engine has not started yet
      */
     public static boolean isPrimary() {
         if (singleton != null) {
             return singleton.lastSeenState.getOwnerURL().equals(singleton.reordered.getServerURL());
         } else {
-            throw new EngineNotStartedException();
+            throw new EngineNotInitializedException();
         }
     }
 
@@ -118,13 +156,16 @@ public class Engine {
      * Only use this method if the callback may change dynamically, otherwise use the parameter in the constructor
      *
      * @param callback The new callback when this server becomes primary
-     * @throws EngineNotStartedException if the engine has not started yet
+     * @throws EngineNotInitializedException if the engine has not started yet
      */
     public static void onPrimary(Consumer<Map<String, String>> callback) {
         if (singleton != null) {
+            if (callback == null) {
+                callback = DO_NOTHING;
+            }
             singleton.callback = callback;
         } else {
-            throw new EngineNotStartedException();
+            throw new EngineNotInitializedException();
         }
     }
 
@@ -135,9 +176,12 @@ public class Engine {
      */
     public static void pushContents(Map<String, String> contents) {
         if (singleton != null) {
+            if (contents == null) {
+                contents = EMPTY;
+            }
             singleton.contents = contents;
         } else {
-            throw new EngineNotStartedException();
+            throw new EngineNotInitializedException();
         }
     }
 
@@ -162,12 +206,15 @@ public class Engine {
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
         this.orders = new ConcurrentLinkedQueue<>();
-        this.contents = contents;
+        if (contents != null) {
+            this.contents = contents;
+        } else {
+            this.contents = EMPTY;
+        }
         if (callback != null) {
             this.callback = callback;
         } else {
-            this.callback = t -> {
-            };
+            this.callback = DO_NOTHING;
         }
     }
 
@@ -182,64 +229,50 @@ public class Engine {
     }
 
     public void run() {
-//        Thread t1 = new Thread(() -> {
-//            while (!stopTransmitting || orders.size() > 0) {
-//                WorkOrder order = this.orders.poll();
-//                if (order == null) {
-//                } else if (order.executeAfter.isAfter(Instant.now())) {
-//                    this.orders.add(order);
-//                } else {
-//                    boolean found = false;
-//                    Server n = this.reordered;
-//                    String x = Stream.iterate(n, t -> t.getNext()).filter(t -> this.provider.getTransmitter().isUp(t.getServerURL())).findFirst().get().getServerURL();
-//                    while (!this.provider.getTransmitter().isUp(n.getServerURl())) {
-//                        n = n.getNext();
-//                    }
-//                    String x = n.getServerURl();
-//                    if(x.equals(this.reordered.getServerURL())){
-//
-//                    } else {
-//                        this.provider.getTransmitter().send(x, order.associatedState);
-//                    }
-//                }
-//                try {
-//                    Thread.sleep(1);
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//        });
-//        t1.setDaemon(true);
+        Thread t1 = new Thread(() -> {
+            while (!stopTransmitting || orders.size() > 0) {
+                WorkOrder order = this.orders.poll();
+                if (order == null) {
+                } else if (order.executeAfter.isAfter(Instant.now())) {
+                    this.orders.add(order);
+                } else {
+                    String serverTo = sendToFirstActiveServer(order.associatedState);
+                    logger.debug("Sent state to " + serverTo);
+                }
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+        t1.setDaemon(true);
         Thread t2 = new Thread(() -> {
             while (!stopReceiving) {
                 Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout);
                 if (st.isPresent()) {
                     State newState = st.get();
                     logger.debug("Received state: " + newState.toLog());
+                    Instant execTime = null;
                     if (newState.equals(this.lastSeenState)) {
                         //theOneTrueKingIsYouAgain()
                         this.lastSeenState = newState.reissue();
                         this.lastSeenState.setContents(this.contents);
                         logger.debug("Retained Primary: " + this.lastSeenState.toLog());
-                        try {
-                            Thread.sleep(this.heartbeatDelay);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
+                        execTime = Instant.now().plusMillis(this.heartbeatDelay);
                     } else {
                         //theOneTrueKingIsNotYou()
                         this.lastSeenState = newState;
                         logger.debug("Not Primary");
+                        execTime = Instant.now();
                     }
-                    String serverTo = sendToFirstActiveServer(this.lastSeenState);
-                    logger.debug("Sent state to " + serverTo);
+                    this.orders.add(new WorkOrder(execTime, this.lastSeenState));
                 } else {
                     //theOneTrueKingIsYou();
                     if (!this.stopReceiving) {
                         this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
                         logger.debug("Became Primary due to timeout: " + this.lastSeenState.toLog());
-                        String serverTo = sendToFirstActiveServer(this.lastSeenState);
-                        logger.debug("Sent state to " + serverTo);
+                        this.orders.add(new WorkOrder(Instant.now(), this.lastSeenState));
                         executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
                     }
                 }
@@ -248,7 +281,7 @@ public class Engine {
             }
         });
         t2.setDaemon(true);
-//        t1.start();
+        t1.start();
         t2.start();
     }
 
