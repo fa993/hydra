@@ -7,6 +7,7 @@ import com.fa993.misc.Utils;
 import java.io.*;
 import java.net.*;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class SocketReceiverConnection implements ReceiverConnection {
@@ -24,7 +25,7 @@ public class SocketReceiverConnection implements ReceiverConnection {
     }
 
     @Override
-    public Optional<State> receive(int timeout) {
+    public Optional<State> receive(int timeout, Function<State, Boolean> validator) {
         //TODO fix this
         try {
             this.serverSocket.setSoTimeout(timeout);
@@ -32,10 +33,16 @@ public class SocketReceiverConnection implements ReceiverConnection {
             so.setTcpNoDelay(true);
             BufferedReader str = new BufferedReader(new InputStreamReader(so.getInputStream()));
             String collection = str.readLine();
+            State receivedState = Utils.obm.readValue(collection, State.class);
             BufferedWriter wr = new BufferedWriter(new OutputStreamWriter(so.getOutputStream()));
-            wr.write('0');
+            if(!validator.apply(receivedState)){
+                wr.write('1');
+                receivedState = null;
+            } else {
+                wr.write('0');
+            }
             wr.flush();
-            return Optional.ofNullable(Utils.obm.readValue(collection, State.class));
+            return Optional.ofNullable(receivedState);
         } catch (Exception e) {
             e.printStackTrace();
             return Optional.empty();

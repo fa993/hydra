@@ -18,6 +18,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public class Engine {
 
@@ -59,6 +60,8 @@ public class Engine {
         t.setDaemon(true);
         return t;
     });
+
+    private final Function<State, Boolean> validator;
 
     /**
      * Only use this method if you want to dynamically set the contents and the callback otherwise use {@link Engine#start(Map, Consumer)} which require the engine to be initialized but this server is not ready to be inserted into the cluster.
@@ -216,6 +219,14 @@ public class Engine {
         } else {
             this.callback = DO_NOTHING;
         }
+        this.validator = (s) -> {
+            if (this.lastSeenState != null && this.reordered.getServerURL().equals(this.lastSeenState.getOwnerURL()) && !this.reordered.getServerURL().equals(s.getOwnerURL())) {
+                //Split brain hit!
+                return false;
+            } else {
+                return true;
+            }
+        };
     }
 
     public Configuration readConfigFile() throws NoConfigurationFileException, MalformedConfigurationFileException {
@@ -236,8 +247,17 @@ public class Engine {
                 } else if (order.executeAfter.isAfter(Instant.now())) {
                     this.orders.add(order);
                 } else {
-                    String serverTo = sendToFirstActiveServer(order.associatedState);
-                    logger.debug("Sent state to " + serverTo);
+                    Transaction transaction = sendToFirstActiveServer(order.associatedState);
+                    switch (transaction.getResult()) {
+                        case VETOED:
+                            logger.debug("Vetoed sending of state");
+                            order.status = Status.VETOED;
+                            break;
+                        case SUCCESS:
+                            logger.debug("Sent state to " + transaction.getServerTo());
+                            order.status = Status.SUCCESS;
+                            break;
+                    }
                 }
                 try {
                     Thread.sleep(1);
@@ -249,11 +269,12 @@ public class Engine {
         t1.setDaemon(true);
         Thread t2 = new Thread(() -> {
             while (!stopReceiving) {
-                Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout);
+                Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout, this.validator);
                 if (st.isPresent()) {
                     State newState = st.get();
                     logger.debug("Received state: " + newState.toLog());
                     Instant execTime = null;
+
                     if (newState.equals(this.lastSeenState)) {
                         //theOneTrueKingIsYouAgain()
                         this.lastSeenState = newState.reissue();
@@ -266,14 +287,37 @@ public class Engine {
                         logger.debug("Not Primary");
                         execTime = Instant.now();
                     }
-                    this.orders.add(new WorkOrder(execTime, this.lastSeenState));
+                    WorkOrder w = new WorkOrder(execTime, this.lastSeenState, Status.PENDING);
+                    this.orders.add(w);
+                    while (w.status == Status.PENDING) {
+                        try {
+                            Thread.sleep(1);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    if (w.status == Status.SUCCESS) {
+                        executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
+                    }
                 } else {
-                    //theOneTrueKingIsYou();
-                    if (!this.stopReceiving) {
+                    if (this.reordered.getServerURL().equals(this.lastSeenState.getOwnerURL())) {
+                        logger.debug("Rejected a state to avoid split brain");
+                    } else if (!this.stopReceiving) {
+                        //theOneTrueKingIsYou();
                         this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
                         logger.debug("Became Primary due to timeout: " + this.lastSeenState.toLog());
-                        this.orders.add(new WorkOrder(Instant.now(), this.lastSeenState));
-                        executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
+                        WorkOrder w = new WorkOrder(Instant.now(), this.lastSeenState, Status.PENDING);
+                        this.orders.add(w);
+                        while (w.status == Status.PENDING) {
+                            try {
+                                Thread.sleep(1);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        if (w.status == Status.SUCCESS) {
+                            executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
+                        }
                     }
                 }
                 this.lastActiveTime = Instant.now();
@@ -285,15 +329,16 @@ public class Engine {
         t2.start();
     }
 
-    private String sendToFirstActiveServer(State state) {
+    private Transaction sendToFirstActiveServer(State state) {
         Server n = this.reordered.getNext();
-        while (!trySend(n.getServerURL(), state)) {
+        TransactionResult result = null;
+        while ((result = trySend(n.getServerURL(), state)) != TransactionResult.FAILURE) {
             n = n.getNext();
         }
-        return n.getServerURL();
+        return new Transaction(n.getServerURL(), result);
     }
 
-    private boolean trySend(String thisServer, State state) {
+    private TransactionResult trySend(String thisServer, State state) {
         return this.provider.getTransmitter().send(thisServer, state);
     }
 

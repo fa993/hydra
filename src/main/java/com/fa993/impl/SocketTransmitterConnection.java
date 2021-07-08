@@ -1,12 +1,12 @@
 package com.fa993.impl;
 
+import com.fa993.core.TransactionResult;
 import com.fa993.api.TransmitterConnection;
 import com.fa993.core.State;
 import com.fa993.misc.Utils;
 
 import java.io.*;
 import java.net.InetAddress;
-import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.URL;
 
@@ -19,7 +19,7 @@ public class SocketTransmitterConnection implements TransmitterConnection {
     }
 
     @Override
-    public boolean send(String serverURL, State state) {
+    public TransactionResult send(String serverURL, State state) {
         try {
             URL urlTo = new URL(serverURL);
             Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
@@ -29,10 +29,14 @@ public class SocketTransmitterConnection implements TransmitterConnection {
             writer.flush();
             char c = (char) new BufferedReader(new InputStreamReader(socket.getInputStream())).read();
             socket.close();
-            return c == '0';
+            switch (c){
+                case '0': return TransactionResult.SUCCESS;
+                case '1': return TransactionResult.VETOED;
+                default: return TransactionResult.FAILURE;
+            }
         } catch (Exception e) {
             e.printStackTrace();
-            return false;
+            return TransactionResult.FAILURE;
         }
     }
 }
