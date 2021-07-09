@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -269,44 +268,25 @@ public class Engine {
         t1.setDaemon(true);
         Thread t2 = new Thread(() -> {
             while (!stopReceiving) {
-                Optional<State> st = this.provider.getReceiver().receive(this.connectionTimeout, this.validator);
-                if (st.isPresent()) {
-                    State newState = st.get();
-                    logger.debug("Received state: " + newState.toLog());
-                    Instant execTime = null;
-
-                    if (newState.equals(this.lastSeenState)) {
-                        //theOneTrueKingIsYouAgain()
-                        this.lastSeenState = newState.reissue();
-                        this.lastSeenState.setContents(this.contents);
-                        logger.debug("Retained Primary: " + this.lastSeenState.toLog());
-                        execTime = Instant.now().plusMillis(this.heartbeatDelay);
-                    } else {
-                        //theOneTrueKingIsNotYou()
-                        this.lastSeenState = newState;
-                        logger.debug("Not Primary");
-                        execTime = Instant.now();
-                    }
-                    WorkOrder w = new WorkOrder(execTime, this.lastSeenState, Status.PENDING);
-                    this.orders.add(w);
-                    while (w.status == Status.PENDING) {
-                        try {
-                            Thread.sleep(1);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
+                Transaction tr = this.provider.getReceiver().receive(this.connectionTimeout, this.validator);
+                switch (tr.getResult()) {
+                    case SUCCESS:
+                        State newState = tr.getState();
+                        logger.debug("Received state: " + newState.toLog());
+                        Instant execTime = null;
+                        if (newState.equals(this.lastSeenState)) {
+                            //theOneTrueKingIsYouAgain()
+                            this.lastSeenState = newState.reissue();
+                            this.lastSeenState.setContents(this.contents);
+                            logger.debug("Retained Primary: " + this.lastSeenState.toLog());
+                            execTime = Instant.now().plusMillis(this.heartbeatDelay);
+                        } else {
+                            //theOneTrueKingIsNotYou()
+                            this.lastSeenState = newState;
+                            logger.debug("Not Primary");
+                            execTime = Instant.now();
                         }
-                    }
-                    if (w.status == Status.SUCCESS) {
-                        executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
-                    }
-                } else {
-                    if (this.reordered.getServerURL().equals(this.lastSeenState.getOwnerURL())) {
-                        logger.debug("Rejected a state to avoid split brain");
-                    } else if (!this.stopReceiving) {
-                        //theOneTrueKingIsYou();
-                        this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
-                        logger.debug("Became Primary due to timeout: " + this.lastSeenState.toLog());
-                        WorkOrder w = new WorkOrder(Instant.now(), this.lastSeenState, Status.PENDING);
+                        WorkOrder w = new WorkOrder(execTime, this.lastSeenState, Status.PENDING);
                         this.orders.add(w);
                         while (w.status == Status.PENDING) {
                             try {
@@ -318,7 +298,32 @@ public class Engine {
                         if (w.status == Status.SUCCESS) {
                             executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
                         }
-                    }
+                        break;
+                    case TIMEOUT:
+                        if (!this.stopReceiving) {
+                            //theOneTrueKingIsYou();
+                            this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
+                            logger.debug("Became Primary due to timeout: " + this.lastSeenState.toLog());
+                            WorkOrder w1 = new WorkOrder(Instant.now(), this.lastSeenState, Status.PENDING);
+                            this.orders.add(w1);
+                            while (w1.status == Status.PENDING) {
+                                try {
+                                    Thread.sleep(1);
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                            if (w1.status == Status.SUCCESS) {
+                                executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
+                            }
+                        }
+                        break;
+                    case VETOED:
+                        logger.debug("Rejected a state to avoid split brain");
+                        break;
+                    case FAILURE:
+                        logger.debug("Some unknown exception occurred");
+                        break;
                 }
                 this.lastActiveTime = Instant.now();
                 stopTransmitting = stopReceiving;
@@ -332,9 +337,10 @@ public class Engine {
     private Transaction sendToFirstActiveServer(State state) {
         Server n = this.reordered.getNext();
         TransactionResult result = null;
-        while ((result = trySend(n.getServerURL(), state)) != TransactionResult.FAILURE) {
+        do {
+            result = trySend(n.getServerURL(), state);
             n = n.getNext();
-        }
+        } while (result == TransactionResult.FAILURE || result == TransactionResult.TIMEOUT);
         return new Transaction(n.getServerURL(), result);
     }
 

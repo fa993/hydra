@@ -2,6 +2,8 @@ package com.fa993.impl;
 
 import com.fa993.api.ReceiverConnection;
 import com.fa993.core.State;
+import com.fa993.core.Transaction;
+import com.fa993.core.TransactionResult;
 import com.fa993.misc.Utils;
 
 import java.io.*;
@@ -25,7 +27,7 @@ public class SocketReceiverConnection implements ReceiverConnection {
     }
 
     @Override
-    public Optional<State> receive(int timeout, Function<State, Boolean> validator) {
+    public Transaction receive(int timeout, Function<State, Boolean> validator) {
         //TODO fix this
         try {
             this.serverSocket.setSoTimeout(timeout);
@@ -37,15 +39,19 @@ public class SocketReceiverConnection implements ReceiverConnection {
             BufferedWriter wr = new BufferedWriter(new OutputStreamWriter(so.getOutputStream()));
             if(!validator.apply(receivedState)){
                 wr.write('1');
-                receivedState = null;
+                wr.flush();
+                return new Transaction((State) null, TransactionResult.VETOED);
             } else {
                 wr.write('0');
+                wr.flush();
+                return new Transaction(receivedState, TransactionResult.SUCCESS);
             }
-            wr.flush();
-            return Optional.ofNullable(receivedState);
-        } catch (Exception e) {
+        } catch (SocketTimeoutException e) {
             e.printStackTrace();
-            return Optional.empty();
+            return new Transaction((State) null, TransactionResult.TIMEOUT);
+        } catch (Exception e) {
+            e.printStackTrace();;
+            return new Transaction((State) null, TransactionResult.FAILURE);
         }
     }
 }

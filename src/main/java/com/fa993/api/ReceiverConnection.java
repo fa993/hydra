@@ -1,8 +1,8 @@
 package com.fa993.api;
 
 import com.fa993.core.State;
+import com.fa993.core.Transaction;
 
-import java.util.Optional;
 import java.util.function.Function;
 
 public interface ReceiverConnection {
@@ -10,11 +10,12 @@ public interface ReceiverConnection {
     /**
      * Impl Note: This method must block for at most the amount of time in timeout
      * Impl Note: This method must return an empty optional if the validator returns invalid(false)
+     * Impl Note: The returned transaction object must have a non-null {@link com.fa993.core.TransactionResult} field and for a successful transaction have a non-null {@link State}
      *
      * @param timeout   the time after which this method returns
      * @param validator the function which returns the validity of the received state, true if valid, false otherwise
-     * @return An optional representing the state that was received or an empty optional if nothing was received
+     * @return A {@link Transaction} object that represents the details of this transaction.
      */
-    public Optional<State> receive(int timeout, Function<State, Boolean> validator);
+    public Transaction receive(int timeout, Function<State, Boolean> validator);
 
 }
