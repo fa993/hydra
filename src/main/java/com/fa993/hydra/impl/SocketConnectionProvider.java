@@ -1,9 +1,9 @@
-package com.fa993.impl;
+package com.fa993.hydra.impl;
 
-import com.fa993.api.ConnectionProvider;
-import com.fa993.api.ReceiverConnection;
-import com.fa993.api.TransmitterConnection;
-import com.fa993.core.Configuration;
+import com.fa993.hydra.core.Configuration;
+import com.fa993.hydra.api.ConnectionProvider;
+import com.fa993.hydra.api.ReceiverConnection;
+import com.fa993.hydra.api.TransmitterConnection;
 
 public class SocketConnectionProvider implements ConnectionProvider {
 

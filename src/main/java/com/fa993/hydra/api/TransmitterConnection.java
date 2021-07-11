@@ -1,7 +1,7 @@
-package com.fa993.api;
+package com.fa993.hydra.api;
 
-import com.fa993.core.State;
-import com.fa993.core.TransactionResult;
+import com.fa993.hydra.core.State;
+import com.fa993.hydra.core.TransactionResult;
 
 public interface TransmitterConnection {
 

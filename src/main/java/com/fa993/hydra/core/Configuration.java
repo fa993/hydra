@@ -1,4 +1,4 @@
-package com.fa993.core;
+package com.fa993.hydra.core;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -22,9 +22,9 @@ public class Configuration {
     public Configuration() {
         this.servers = new String[0];
         this.currentServerIndex = 0;
-        this.heartbeatTime = 10;
-        this.cooldownTime = 100;
-        this.connectionProvider = "com.fa993.impl.SocketConnectionProvider";
+        this.heartbeatTime = 1000;
+        this.cooldownTime = 100000;
+        this.connectionProvider = "com.fa993.hydra.impl.SocketConnectionProvider";
     }
 
     public String[] getServers() {

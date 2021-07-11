@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.fa993</groupId>
-    <artifactId>upstream_waterfall</artifactId>
-    <version>0.0.0</version>
+    <artifactId>hydra</artifactId>
+    <version>0.1.0</version>
 
     <properties>
         <maven.compiler.source>8</maven.compiler.source>

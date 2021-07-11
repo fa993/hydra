@@ -1,10 +1,9 @@
-package com.fa993.core;
+package com.fa993.hydra.core;
 
-import com.fa993.misc.Utils;
+import com.fa993.hydra.misc.Utils;
 
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 
 public class State {
 

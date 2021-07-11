@@ -1,6 +1,5 @@
-package com.fa993.misc;
+package com.fa993.hydra.misc;
 
-import com.fa993.core.Engine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.UUID;

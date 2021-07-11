@@ -1,4 +1,4 @@
-package com.fa993.api;
+package com.fa993.hydra.api;
 
 public interface ConnectionProvider {
 

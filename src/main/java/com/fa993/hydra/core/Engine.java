@@ -1,8 +1,8 @@
-package com.fa993.core;
+package com.fa993.hydra.core;
 
-import com.fa993.api.ConnectionProvider;
-import com.fa993.exceptions.*;
-import com.fa993.misc.Utils;
+import com.fa993.hydra.api.ConnectionProvider;
+import com.fa993.hydra.exceptions.*;
+import com.fa993.hydra.misc.Utils;
 import com.fasterxml.jackson.core.JsonParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,8 +12,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -244,26 +242,24 @@ public class Engine {
             while (!stopTransmitting || orders.size() > 0) {
                 try {
                     WorkOrder order = this.orders.take();
-                    if (order == null) {
-                    } else if (order.executeAfter - System.currentTimeMillis() > 0) {
-                        this.orders.add(order);
-                    } else {
-                        Transaction transaction = sendToFirstActiveServer(order.associatedState);
-                        switch (transaction.getResult()) {
-                            case VETOED:
-                                logger.trace("Vetoed sending of state");
-                                order.status = Status.VETOED;
-                                break;
-                            case SUCCESS:
-                                logger.trace("Sent state to " + transaction.getServerTo());
-                                order.status = Status.SUCCESS;
-                                break;
-                        }
-                        executor.execute(() -> order.get(order.status).run());
+                    long t = order.executeAfter - System.currentTimeMillis();
+                    if (t > 0) {
+                        Thread.sleep(t);
                     }
-                    Thread.sleep(1);
+                    Transaction transaction = sendToFirstActiveServer(order.associatedState);
+                    switch (transaction.getResult()) {
+                        case VETOED:
+                            logger.trace("Vetoed sending of state");
+                            order.status = Status.VETOED;
+                            break;
+                        case SUCCESS:
+                            logger.trace("Sent state to " + transaction.getServerTo());
+                            order.status = Status.SUCCESS;
+                            break;
+                    }
+                    executor.execute(() -> order.get(order.status).run());
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    logger.debug("Interrupted", e);
                 }
             }
         });
@@ -274,16 +270,18 @@ public class Engine {
                     case SUCCESS:
                         State newState = tr.getState();
                         logger.trace("Received state: " + newState.toLog());
-                        long execTime = System.currentTimeMillis() + this.heartbeatDelay;
+                        long execTime;
                         if (newState.equals(this.lastSeenState)) {
                             //theOneTrueKingIsYouAgain()
                             this.lastSeenState = newState.reissue();
                             this.lastSeenState.setContents(this.contents);
                             logger.trace("Retained Primary: " + this.lastSeenState.toLog());
+                            execTime = System.currentTimeMillis() + this.heartbeatDelay;
                         } else {
                             //theOneTrueKingIsNotYou()
                             this.lastSeenState = newState;
                             logger.trace("Not Primary");
+                            execTime = System.currentTimeMillis();
                         }
                         WorkOrder w = new WorkOrder(execTime, this.lastSeenState, Status.PENDING);
                         this.orders.add(w);
@@ -292,7 +290,7 @@ public class Engine {
                         if (!this.stopReceiving) {
                             //theOneTrueKingIsYou();
                             this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
-                            logger.trace("Became Primary due to timeout: " + this.lastSeenState.toLog());
+                            logger.info("Became Primary due to timeout: " + this.lastSeenState.toLog());
                             WorkOrder w1 = new WorkOrder(System.currentTimeMillis(), this.lastSeenState, Status.PENDING);
                             w1.on(Status.SUCCESS, () -> this.callback.accept(this.lastSeenState.getContents()));
                             this.orders.add(w1);

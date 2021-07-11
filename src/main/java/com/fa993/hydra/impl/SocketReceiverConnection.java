@@ -1,16 +1,14 @@
-package com.fa993.impl;
+package com.fa993.hydra.impl;
 
-import com.fa993.api.ReceiverConnection;
-import com.fa993.core.State;
-import com.fa993.core.Transaction;
-import com.fa993.core.TransactionResult;
-import com.fa993.misc.Utils;
+import com.fa993.hydra.core.State;
+import com.fa993.hydra.misc.Utils;
+import com.fa993.hydra.api.ReceiverConnection;
+import com.fa993.hydra.core.Transaction;
+import com.fa993.hydra.core.TransactionResult;
 
 import java.io.*;
 import java.net.*;
-import java.util.Optional;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 public class SocketReceiverConnection implements ReceiverConnection {
 
@@ -46,7 +44,6 @@ public class SocketReceiverConnection implements ReceiverConnection {
                 return new Transaction(receivedState, TransactionResult.SUCCESS);
             }
         } catch (SocketTimeoutException e) {
-            e.printStackTrace();
             return new Transaction((State) null, TransactionResult.TIMEOUT);
         } catch (Exception e) {
             e.printStackTrace();

@@ -1,4 +1,4 @@
-package com.fa993.exceptions;
+package com.fa993.hydra.exceptions;
 
 public class NoConfigurationFileException extends Exception {
 

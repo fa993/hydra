@@ -1,6 +1,5 @@
-package com.fa993.core;
+package com.fa993.hydra.core;
 
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
