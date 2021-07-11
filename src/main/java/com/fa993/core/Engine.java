@@ -16,6 +16,7 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -48,7 +49,7 @@ public class Engine {
 
     private boolean stopTransmitting;
 
-    private Queue<WorkOrder> orders;
+    private LinkedBlockingQueue<WorkOrder> orders;
 
     private Consumer<Map<String, String>> callback;
 
@@ -63,7 +64,7 @@ public class Engine {
     private final Function<State, Boolean> validator;
 
     /**
-     * Only use this method if you want to dynamically set the contents and the callback otherwise use {@link Engine#start(Map, Consumer)} which require the engine to be initialized but this server is not ready to be inserted into the cluster.
+     * Only use this method if you want to dynamically set the contents and the callback which require the engine to be initialized but this server is not ready to be inserted into the cluster, otherwise use {@link Engine#start(Map, Consumer)}
      * Only use this method in conjunction with {@link Engine#on()}.
      * Do not use {@link Engine#start(Map, Consumer)} with this
      *
@@ -207,7 +208,7 @@ public class Engine {
         this.stopTransmitting = false;
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
-        this.orders = new ConcurrentLinkedQueue<>();
+        this.orders = new LinkedBlockingQueue<>();
         if (contents != null) {
             this.contents = contents;
         } else {
@@ -241,105 +242,85 @@ public class Engine {
     public void run() {
         Thread t1 = new Thread(() -> {
             while (!stopTransmitting || orders.size() > 0) {
-                WorkOrder order = this.orders.poll();
-                if (order == null) {
-                } else if (order.executeAfter.isAfter(Instant.now())) {
-                    this.orders.add(order);
-                } else {
-                    Transaction transaction = sendToFirstActiveServer(order.associatedState);
-                    switch (transaction.getResult()) {
-                        case VETOED:
-                            logger.debug("Vetoed sending of state");
-                            order.status = Status.VETOED;
-                            break;
-                        case SUCCESS:
-                            logger.debug("Sent state to " + transaction.getServerTo());
-                            order.status = Status.SUCCESS;
-                            break;
-                    }
-                }
                 try {
+                    WorkOrder order = this.orders.take();
+                    if (order == null) {
+                    } else if (order.executeAfter - System.currentTimeMillis() > 0) {
+                        this.orders.add(order);
+                    } else {
+                        Transaction transaction = sendToFirstActiveServer(order.associatedState);
+                        switch (transaction.getResult()) {
+                            case VETOED:
+                                logger.trace("Vetoed sending of state");
+                                order.status = Status.VETOED;
+                                break;
+                            case SUCCESS:
+                                logger.trace("Sent state to " + transaction.getServerTo());
+                                order.status = Status.SUCCESS;
+                                break;
+                        }
+                        executor.execute(() -> order.get(order.status).run());
+                    }
                     Thread.sleep(1);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
         });
-        t1.setDaemon(true);
         Thread t2 = new Thread(() -> {
             while (!stopReceiving) {
                 Transaction tr = this.provider.getReceiver().receive(this.connectionTimeout, this.validator);
                 switch (tr.getResult()) {
                     case SUCCESS:
                         State newState = tr.getState();
-                        logger.debug("Received state: " + newState.toLog());
-                        Instant execTime = null;
+                        logger.trace("Received state: " + newState.toLog());
+                        long execTime = System.currentTimeMillis() + this.heartbeatDelay;
                         if (newState.equals(this.lastSeenState)) {
                             //theOneTrueKingIsYouAgain()
                             this.lastSeenState = newState.reissue();
                             this.lastSeenState.setContents(this.contents);
-                            logger.debug("Retained Primary: " + this.lastSeenState.toLog());
-                            execTime = Instant.now().plusMillis(this.heartbeatDelay);
+                            logger.trace("Retained Primary: " + this.lastSeenState.toLog());
                         } else {
                             //theOneTrueKingIsNotYou()
                             this.lastSeenState = newState;
-                            logger.debug("Not Primary");
-                            execTime = Instant.now();
+                            logger.trace("Not Primary");
                         }
                         WorkOrder w = new WorkOrder(execTime, this.lastSeenState, Status.PENDING);
                         this.orders.add(w);
-                        while (w.status == Status.PENDING) {
-                            try {
-                                Thread.sleep(1);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                        if (w.status == Status.SUCCESS) {
-                            executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
-                        }
                         break;
                     case TIMEOUT:
                         if (!this.stopReceiving) {
                             //theOneTrueKingIsYou();
                             this.lastSeenState = new State(this.reordered.getServerURL(), this.contents);
-                            logger.debug("Became Primary due to timeout: " + this.lastSeenState.toLog());
-                            WorkOrder w1 = new WorkOrder(Instant.now(), this.lastSeenState, Status.PENDING);
+                            logger.trace("Became Primary due to timeout: " + this.lastSeenState.toLog());
+                            WorkOrder w1 = new WorkOrder(System.currentTimeMillis(), this.lastSeenState, Status.PENDING);
+                            w1.on(Status.SUCCESS, () -> this.callback.accept(this.lastSeenState.getContents()));
                             this.orders.add(w1);
-                            while (w1.status == Status.PENDING) {
-                                try {
-                                    Thread.sleep(1);
-                                } catch (InterruptedException e) {
-                                    e.printStackTrace();
-                                }
-                            }
-                            if (w1.status == Status.SUCCESS) {
-                                executor.execute(() -> this.callback.accept(this.lastSeenState.getContents()));
-                            }
                         }
                         break;
                     case VETOED:
-                        logger.debug("Rejected a state to avoid split brain");
+                        logger.trace("Rejected a state to avoid split brain");
                         break;
                     case FAILURE:
-                        logger.debug("Some unknown exception occurred");
+                        logger.trace("Some unknown failure occurred");
                         break;
                 }
                 this.lastActiveTime = Instant.now();
                 stopTransmitting = stopReceiving;
             }
         });
+        t1.setDaemon(true);
         t2.setDaemon(true);
         t1.start();
         t2.start();
     }
 
     private Transaction sendToFirstActiveServer(State state) {
-        Server n = this.reordered.getNext();
+        Server n = this.reordered;
         TransactionResult result = null;
         do {
-            result = trySend(n.getServerURL(), state);
             n = n.getNext();
+            result = trySend(n.getServerURL(), state);
         } while (result == TransactionResult.FAILURE || result == TransactionResult.TIMEOUT);
         return new Transaction(n.getServerURL(), result);
     }

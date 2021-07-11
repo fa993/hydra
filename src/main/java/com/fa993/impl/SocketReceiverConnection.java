@@ -28,7 +28,6 @@ public class SocketReceiverConnection implements ReceiverConnection {
 
     @Override
     public Transaction receive(int timeout, Function<State, Boolean> validator) {
-        //TODO fix this
         try {
             this.serverSocket.setSoTimeout(timeout);
             Socket so = this.serverSocket.accept();
@@ -50,7 +49,7 @@ public class SocketReceiverConnection implements ReceiverConnection {
             e.printStackTrace();
             return new Transaction((State) null, TransactionResult.TIMEOUT);
         } catch (Exception e) {
-            e.printStackTrace();;
+            e.printStackTrace();
             return new Transaction((State) null, TransactionResult.FAILURE);
         }
     }
