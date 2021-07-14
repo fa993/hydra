@@ -1,7 +1,6 @@
 package com.fa993.hydra.impl;
 
-import com.fa993.hydra.core.State;
-import com.fa993.hydra.misc.Utils;
+import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.api.ReceiverConnection;
 import com.fa993.hydra.core.Transaction;
 import com.fa993.hydra.core.TransactionResult;
@@ -14,10 +13,12 @@ public class SocketReceiverConnection implements ReceiverConnection {
 
     private ServerSocket serverSocket;
     private URL serverURL;
+    private ExchangeSpec spec;
 
-    public SocketReceiverConnection(String myServerURL) {
+    public SocketReceiverConnection(String myServerURL, ExchangeSpec spec) {
         try {
             this.serverURL = new URL(myServerURL);
+            this.spec = spec;
             this.serverSocket = new ServerSocket(this.serverURL.getPort(), 1000, InetAddress.getByName(this.serverURL.getHost()));
         } catch (IOException e) {
             e.printStackTrace();
@@ -25,29 +26,37 @@ public class SocketReceiverConnection implements ReceiverConnection {
     }
 
     @Override
-    public Transaction receive(int timeout, Function<State, Boolean> validator) {
+    public Transaction receive(int timeout, Function<Parcel, Boolean> validator) {
         try {
             this.serverSocket.setSoTimeout(timeout);
             Socket so = this.serverSocket.accept();
             so.setTcpNoDelay(true);
-            BufferedReader str = new BufferedReader(new InputStreamReader(so.getInputStream()));
-            String collection = str.readLine();
-            State receivedState = Utils.obm.readValue(collection, State.class);
-            BufferedWriter wr = new BufferedWriter(new OutputStreamWriter(so.getOutputStream()));
-            if(!validator.apply(receivedState)){
-                wr.write('1');
-                wr.flush();
-                return new Transaction((State) null, TransactionResult.VETOED);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(so.getInputStream()));
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(so.getOutputStream()));
+            char prep = (char) reader.read();
+            if (spec.containsReverseMarker(prep)) {
+                writer.write('0');
             } else {
-                wr.write('0');
-                wr.flush();
-                return new Transaction(receivedState, TransactionResult.SUCCESS);
+                writer.write('1');
+            }
+            writer.flush();
+            String collection = reader.readLine();
+            Parcel receivedParcel = (Parcel) spec.decode(collection, spec.getReverseMarkerFor(prep));
+            if (validator.apply(receivedParcel)) {
+                char c = spec.getMarkerFor(receivedParcel.getClass());
+                writer.write(c);
+                writer.flush();
+                return new Transaction(receivedParcel, spec.getTransactionResultFor(c));
+            } else {
+                writer.write('0');
+                writer.flush();
+                return new Transaction((Parcel) null, TransactionResult.VETOED);
             }
         } catch (SocketTimeoutException e) {
-            return new Transaction((State) null, TransactionResult.TIMEOUT);
+            return new Transaction((Parcel) null, TransactionResult.TIMEOUT);
         } catch (Exception e) {
             e.printStackTrace();
-            return new Transaction((State) null, TransactionResult.FAILURE);
+            return new Transaction((Parcel) null, TransactionResult.FAILURE);
         }
     }
 }

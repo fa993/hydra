@@ -1,11 +1,12 @@
 package com.fa993.hydra.core;
 
+import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.misc.Utils;
 
 import java.util.Map;
 import java.util.Objects;
 
-public class State {
+public class State implements Parcel {
 
     private String stateId;
 

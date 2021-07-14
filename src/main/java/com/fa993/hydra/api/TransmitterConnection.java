@@ -8,9 +8,9 @@ public interface TransmitterConnection {
     /**
      *
      * @param serverURL The server to be sent to
-     * @param state the state that must be sent
+     * @param parcel the parcel that must be sent
      * @return the {@link TransactionResult} which represents the result of this operation
      */
-    public TransactionResult send(String serverURL, State state);
+    public TransactionResult send(String serverURL, Parcel parcel);
 
 }

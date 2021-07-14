@@ -1,39 +1,52 @@
 package com.fa993.hydra.impl;
 
-import com.fa993.hydra.core.State;
-import com.fa993.hydra.misc.Utils;
-import com.fa993.hydra.core.TransactionResult;
+import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.api.TransmitterConnection;
+import com.fa993.hydra.core.TransactionResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URL;
 
 public class SocketTransmitterConnection implements TransmitterConnection {
 
-    private String myServer;
+    private static Logger logger = LoggerFactory.getLogger(SocketTransmitterConnection.class);
 
-    public SocketTransmitterConnection(String myServerURL) {
+    private String myServer;
+    private ExchangeSpec spec;
+
+    public SocketTransmitterConnection(String myServerURL, ExchangeSpec spec) {
         this.myServer = myServerURL;
+        this.spec = spec;
     }
 
     @Override
-    public TransactionResult send(String serverURL, State state) {
+    public TransactionResult send(String serverURL, Parcel parcel) {
         try {
             URL urlTo = new URL(serverURL);
             Socket socket = new Socket(InetAddress.getByName(urlTo.getHost()), urlTo.getPort());
             socket.setTcpNoDelay(true);
             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
-            writer.write(Utils.obm.writeValueAsString(state) + "\n");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            writer.write(spec.getMarkerFor(parcel.getClass()));
             writer.flush();
-            char c = (char) new BufferedReader(new InputStreamReader(socket.getInputStream())).read();
-            socket.close();
-            switch (c){
-                case '0': return TransactionResult.SUCCESS;
-                case '1': return TransactionResult.VETOED;
-                default: return TransactionResult.FAILURE;
+            char res = (char) reader.read();
+            if (res != '0') {
+                socket.close();
+                logger.error("Response indicates that the server isn't ready to accept object");
+                return TransactionResult.FAILURE;
             }
+            writer.write(spec.encode(parcel) + "\n");
+            writer.flush();
+            char c = (char) reader.read();
+            socket.close();
+            return spec.getTransactionResultForOrDefault(c, TransactionResult.VETOED);
         } catch (Exception e) {
             return TransactionResult.FAILURE;
         }

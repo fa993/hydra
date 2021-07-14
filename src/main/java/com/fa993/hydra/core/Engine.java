@@ -1,9 +1,12 @@
 package com.fa993.hydra.core;
 
 import com.fa993.hydra.api.ConnectionProvider;
+import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.exceptions.*;
+import com.fa993.hydra.impl.SocketConnectionProvider;
 import com.fa993.hydra.misc.Utils;
 import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +29,8 @@ public class Engine {
 
     private static final Consumer<Map<String, String>> DO_NOTHING = t -> {
     };
+
+    private static ObjectMapper mapper = new ObjectMapper();
 
     private static final Map<String, String> EMPTY = new HashMap<>();
 
@@ -59,7 +64,7 @@ public class Engine {
         return t;
     });
 
-    private final Function<State, Boolean> validator;
+    private final Function<Parcel, Boolean> validator;
 
     /**
      * Only use this method if you want to dynamically set the contents and the callback which require the engine to be initialized but this server is not ready to be inserted into the cluster, otherwise use {@link Engine#start(Map, Consumer)}
@@ -218,18 +223,28 @@ public class Engine {
             this.callback = DO_NOTHING;
         }
         this.validator = (s) -> {
-            if (this.lastSeenState != null && this.reordered.getServerURL().equals(this.lastSeenState.getOwnerURL()) && !this.reordered.getServerURL().equals(s.getOwnerURL())) {
-                //Split brain hit!
-                return false;
-            } else {
+            if (s instanceof Command) {
                 return true;
+            } else if (s instanceof State) {
+                State st = (State) s;
+                if (this.lastSeenState != null && this.reordered.getServerURL().equals(this.lastSeenState.getOwnerURL()) && !this.reordered.getServerURL().equals(st.getOwnerURL())) {
+                    //Split brain hit!
+                    int x1 = this.configs.indexOf(st.getOwnerURL());
+                    int x2 = this.configs.getCurrentServerIndex();
+                    //only reject flow from one side
+                    return x1 - x2 > 0;
+                } else {
+                    return true;
+                }
+            } else {
+                return false;
             }
         };
     }
 
     public Configuration readConfigFile() throws NoConfigurationFileException, MalformedConfigurationFileException {
         try {
-            return Utils.obm.readValue(new File("src/main/resources/waterfall.json"), Configuration.class);
+            return mapper.readValue(new File("src/main/resources/waterfall.json"), Configuration.class);
         } catch (JsonParseException e) {
             throw new MalformedConfigurationFileException(e);
         } catch (IOException e) {
@@ -249,11 +264,15 @@ public class Engine {
                     Transaction transaction = sendToFirstActiveServer(order.associatedState);
                     switch (transaction.getResult()) {
                         case VETOED:
-                            logger.trace("Vetoed sending of state");
+                            logger.trace("The send was vetoed");
                             order.status = Status.VETOED;
                             break;
-                        case SUCCESS:
+                        case STATE:
                             logger.trace("Sent state to " + transaction.getServerTo());
+                            order.status = Status.SUCCESS;
+                            break;
+                        case COMMAND:
+                            logger.trace("Sent command to " + transaction.getServerTo());
                             order.status = Status.SUCCESS;
                             break;
                     }
@@ -267,8 +286,11 @@ public class Engine {
             while (!stopReceiving) {
                 Transaction tr = this.provider.getReceiver().receive(this.connectionTimeout, this.validator);
                 switch (tr.getResult()) {
-                    case SUCCESS:
-                        State newState = tr.getState();
+                    case COMMAND:
+                        Command command = (Command) tr.getParcel();
+                        break;
+                    case STATE:
+                        State newState = (State) tr.getParcel();
                         logger.trace("Received state: " + newState.toLog());
                         long execTime;
                         if (newState.equals(this.lastSeenState)) {

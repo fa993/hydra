@@ -27,6 +27,15 @@ public class Configuration {
         this.connectionProvider = "com.fa993.hydra.impl.SocketConnectionProvider";
     }
 
+    public int indexOf(String urlToFind){
+        for(int i = 0; i < this.servers.length; i++){
+            if(this.servers[i].equals(urlToFind)){
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public String[] getServers() {
         return servers;
     }
