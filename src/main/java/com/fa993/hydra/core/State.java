@@ -38,7 +38,7 @@ public class State implements Parcel {
     public State reissue(String ownerURL) {
         State ret = reissue();
         ret.ownerURL = ownerURL;
-        return  ret;
+        return ret;
     }
 
     public String getStateId() {

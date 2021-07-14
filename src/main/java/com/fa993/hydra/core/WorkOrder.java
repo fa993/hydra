@@ -1,14 +1,17 @@
 package com.fa993.hydra.core;
 
+import com.fa993.hydra.api.Parcel;
+
 import java.util.HashMap;
 import java.util.Map;
 
 public class WorkOrder {
 
-    private static Runnable DO_NOTHING = () -> {};
+    private static final Runnable DO_NOTHING = () -> {
+    };
 
     public long executeAfter;
-    public State associatedState;
+    public Parcel associatedParcel;
     public Status status;
     private Map<Status, Runnable> ons;
 
@@ -16,10 +19,10 @@ public class WorkOrder {
         this.ons = new HashMap<>();
     }
 
-    public WorkOrder(long executeAfter, State associatedState, Status status) {
+    public WorkOrder(long executeAfter, Parcel associatedParcel, Status status) {
         this();
         this.executeAfter = executeAfter;
-        this.associatedState = associatedState;
+        this.associatedParcel = associatedParcel;
         this.status = status;
     }
 
@@ -28,7 +31,7 @@ public class WorkOrder {
         return this;
     }
 
-    public Runnable get(Status s){
+    public Runnable get(Status s) {
         return this.ons.getOrDefault(s, DO_NOTHING);
     }
 }

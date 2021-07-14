@@ -3,8 +3,6 @@ package com.fa993.hydra.core;
 import com.fa993.hydra.api.ConnectionProvider;
 import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.exceptions.*;
-import com.fa993.hydra.impl.SocketConnectionProvider;
-import com.fa993.hydra.misc.Utils;
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -15,6 +13,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -23,14 +22,14 @@ import java.util.function.Function;
 
 public class Engine {
 
-    private static Logger logger = LoggerFactory.getLogger(Engine.class);
+    private static final Logger logger = LoggerFactory.getLogger(Engine.class);
 
     private static Engine singleton;
 
     private static final Consumer<Map<String, String>> DO_NOTHING = t -> {
     };
 
-    private static ObjectMapper mapper = new ObjectMapper();
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     private static final Map<String, String> EMPTY = new HashMap<>();
 
@@ -39,6 +38,8 @@ public class Engine {
     private ConnectionProvider provider;
 
     private State lastSeenState;
+
+    private Queue<State> proposedNextState;
 
     private Server reordered;
 
@@ -58,13 +59,17 @@ public class Engine {
 
     private Map<String, String> contents;
 
-    private ExecutorService executor = Executors.newSingleThreadExecutor((r) -> {
+    private ExecutorService executor = Executors.newCachedThreadPool((r) -> {
         Thread t = new Thread(r);
         t.setDaemon(true);
         return t;
     });
 
     private final Function<Parcel, Boolean> validator;
+
+    private final Map<String, Function<Command, Boolean>> coreActions;
+
+    private final Map<String, Consumer<Command>> applicationActions;
 
     /**
      * Only use this method if you want to dynamically set the contents and the callback which require the engine to be initialized but this server is not ready to be inserted into the cluster, otherwise use {@link Engine#start(Map, Consumer)}
@@ -212,6 +217,7 @@ public class Engine {
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
         this.orders = new LinkedBlockingQueue<>();
+        this.proposedNextState = new LinkedBlockingQueue<>();
         if (contents != null) {
             this.contents = contents;
         } else {
@@ -240,6 +246,26 @@ public class Engine {
                 return false;
             }
         };
+        this.coreActions = new HashMap<>();
+        this.coreActions.put(Headers.CURRENT_ACTIVE_CLUSTER_MARKER, t -> {
+            t.appendValue(Headers.CURRENT_ACTIVE_CLUSTER, this.reordered.getServerURL());
+            return true;
+        });
+        this.coreActions.put(Headers.FORCE_CORONATION, t -> {
+            if (this.lastSeenState != null && this.lastSeenState.getOwnerURL().equals(singleton.reordered.getServerURL())) {
+                State st = new State(t.getValue(Headers.FORCE_CORONATION), this.lastSeenState.getContents());
+                this.proposedNextState.add(st);
+                return true;
+            } else return false;
+        });
+        this.coreActions.put(Headers.FORCE_CORONATION_ANEW, t -> {
+            if (this.lastSeenState != null && this.lastSeenState.getOwnerURL().equals(singleton.reordered.getServerURL())) {
+                State st = new State(t.getValue(Headers.FORCE_CORONATION), new HashMap<>());
+                this.proposedNextState.add(st);
+                return true;
+            } else return false;
+        });
+        this.applicationActions = new HashMap<>();
     }
 
     public Configuration readConfigFile() throws NoConfigurationFileException, MalformedConfigurationFileException {
@@ -261,7 +287,7 @@ public class Engine {
                     if (t > 0) {
                         Thread.sleep(t);
                     }
-                    Transaction transaction = sendToFirstActiveServer(order.associatedState);
+                    Transaction transaction = sendToFirstActiveServer(order.associatedParcel);
                     switch (transaction.getResult()) {
                         case VETOED:
                             logger.trace("The send was vetoed");
@@ -288,16 +314,36 @@ public class Engine {
                 switch (tr.getResult()) {
                     case COMMAND:
                         Command command = (Command) tr.getParcel();
+                        command.getAllHeaders().forEach(t -> {
+                            boolean b1 = this.coreActions.getOrDefault(t, f -> true).apply(command);
+                            if (b1) {
+                                executor.execute(() -> this.applicationActions.getOrDefault(t, f -> {
+                                }).accept(command));
+                            }
+                        });
+                        this.orders.add(new WorkOrder(System.currentTimeMillis(), command, Status.PENDING));
                         break;
                     case STATE:
                         State newState = (State) tr.getParcel();
                         logger.trace("Received state: " + newState.toLog());
                         long execTime;
+                        Runnable onSuccess = () -> {
+                        };
                         if (newState.equals(this.lastSeenState)) {
                             //theOneTrueKingIsYouAgain()
+                            State candidate = this.proposedNextState.poll();
+                            if (candidate == null) {
+                                this.lastSeenState = newState.reissue();
+                                this.lastSeenState.setContents(this.contents);
+                                logger.trace("Retained Primary: " + this.lastSeenState.toLog());
+                            } else {
+                                this.lastSeenState = candidate;
+                            }
+                            execTime = System.currentTimeMillis() + this.heartbeatDelay;
+                        } else if (newState.getOwnerURL().equals(this.reordered.getServerURL())) {
+                            logger.trace("Got Primary");
                             this.lastSeenState = newState.reissue();
-                            this.lastSeenState.setContents(this.contents);
-                            logger.trace("Retained Primary: " + this.lastSeenState.toLog());
+                            onSuccess = () -> this.callback.accept(this.lastSeenState.getContents());
                             execTime = System.currentTimeMillis() + this.heartbeatDelay;
                         } else {
                             //theOneTrueKingIsNotYou()
@@ -306,6 +352,7 @@ public class Engine {
                             execTime = System.currentTimeMillis();
                         }
                         WorkOrder w = new WorkOrder(execTime, this.lastSeenState, Status.PENDING);
+                        w.on(Status.SUCCESS, onSuccess);
                         this.orders.add(w);
                         break;
                     case TIMEOUT:
@@ -335,18 +382,18 @@ public class Engine {
         t2.start();
     }
 
-    private Transaction sendToFirstActiveServer(State state) {
+    private Transaction sendToFirstActiveServer(Parcel parcel) {
         Server n = this.reordered;
         TransactionResult result = null;
         do {
             n = n.getNext();
-            result = trySend(n.getServerURL(), state);
+            result = trySend(n.getServerURL(), parcel);
         } while (result == TransactionResult.FAILURE || result == TransactionResult.TIMEOUT);
         return new Transaction(n.getServerURL(), result);
     }
 
-    private TransactionResult trySend(String thisServer, State state) {
-        return this.provider.getTransmitter().send(thisServer, state);
+    private TransactionResult trySend(String thisServer, Parcel parcel) {
+        return this.provider.getTransmitter().send(thisServer, parcel);
     }
 
 }

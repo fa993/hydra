@@ -1,16 +1,9 @@
 package com.fa993.hydra.impl;
 
-import com.fa993.hydra.core.Command;
-import com.fa993.hydra.core.Configuration;
 import com.fa993.hydra.api.ConnectionProvider;
 import com.fa993.hydra.api.ReceiverConnection;
 import com.fa993.hydra.api.TransmitterConnection;
-import com.fa993.hydra.core.State;
-import com.fa993.hydra.core.TransactionResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import java.util.HashMap;
-import java.util.Map;
+import com.fa993.hydra.core.Configuration;
 
 public class SocketConnectionProvider implements ConnectionProvider {
 
