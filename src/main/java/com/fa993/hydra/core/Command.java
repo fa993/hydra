@@ -1,16 +1,18 @@
 package com.fa993.hydra.core;
 
 import com.fa993.hydra.api.Parcel;
+import com.fa993.hydra.misc.Utils;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-public class Command implements Parcel {
+public class Command extends Parcel {
 
     private Map<String, String> headers;
 
     public Command() {
+        super(Utils.newId());
         this.headers = new HashMap<>();
     }
 

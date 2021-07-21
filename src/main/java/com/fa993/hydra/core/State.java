@@ -6,32 +6,31 @@ import com.fa993.hydra.misc.Utils;
 import java.util.Map;
 import java.util.Objects;
 
-public class State implements Parcel {
-
-    private String stateId;
+public class State extends Parcel {
 
     private String ownerURL;
 
     private Map<String, String> contents;
 
     public State() {
+        super(null);
     }
 
     public State(String ownerURL, Map<String, String> contents) {
-        this.stateId = Utils.newId();
+        super(Utils.newId());
         this.ownerURL = ownerURL;
         this.contents = contents;
     }
 
     public State(State state) {
-        this.stateId = state.stateId;
+        super(state.id);
         this.ownerURL = state.ownerURL;
         this.contents = state.contents;
     }
 
     public State reissue() {
         State ret = new State(this);
-        ret.stateId = Utils.newId();
+        ret.id = Utils.newId();
         return ret;
     }
 
@@ -39,14 +38,6 @@ public class State implements Parcel {
         State ret = reissue();
         ret.ownerURL = ownerURL;
         return ret;
-    }
-
-    public String getStateId() {
-        return stateId;
-    }
-
-    public void setStateId(String stateId) {
-        this.stateId = stateId;
     }
 
     public String getOwnerURL() {
@@ -66,7 +57,7 @@ public class State implements Parcel {
     }
 
     public String toLog() {
-        return "[" + stateId + ", " + ownerURL + "]";
+        return "[" + id + ", " + ownerURL + "]";
     }
 
     @Override
@@ -74,11 +65,11 @@ public class State implements Parcel {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         State state = (State) o;
-        return Objects.equals(stateId, state.stateId) && Objects.equals(ownerURL, state.ownerURL) && Objects.equals(contents, state.contents);
+        return Objects.equals(id, state.id) && Objects.equals(ownerURL, state.ownerURL) && Objects.equals(contents, state.contents);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(stateId, ownerURL, contents);
+        return Objects.hash(id, ownerURL, contents);
     }
 }

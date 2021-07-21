@@ -5,9 +5,18 @@ import com.fa993.hydra.core.State;
 import com.fa993.hydra.core.TransactionResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
+import java.net.Socket;
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Convenience class containing methods required by both the transmitter and the receiver. Also encapsulates co-ordination functionality between the receiver and the transmitter
+ */
 public class ExchangeSpec {
 
     private ObjectMapper obm;
@@ -15,12 +24,16 @@ public class ExchangeSpec {
     private Map<Class, Character> markers;
     private Map<Character, Class> reverseMarkers;
     private Map<Character, TransactionResult> results;
+    private Map<String, Socket> registeredCommands;
+    private char success;
+    private char failure;
 
     public ExchangeSpec() {
         this.obm = new ObjectMapper();
         this.markers = new HashMap<>();
         this.reverseMarkers = new HashMap<>();
         this.results = new HashMap<>();
+        this.registeredCommands = new ConcurrentHashMap<>();
     }
 
     public void init() {
@@ -30,49 +43,90 @@ public class ExchangeSpec {
         this.reverseMarkers.put('c', Command.class);
         this.results.put('s', TransactionResult.STATE);
         this.results.put('c', TransactionResult.COMMAND);
+        this.success = 'n';
+        this.failure = 'f';
     }
 
     public String encode(Object o) throws Exception {
         return obm.writeValueAsString(o);
     }
 
-    public Object decode(String s, Class c) throws Exception {
+    public <T> T decode(String s, Class<T> c) throws Exception {
         return obm.readValue(s, c);
     }
 
-    public Character getMarkerFor(Class c){
+    public Character getMarkerFor(Class c) {
         return this.markers.get(c);
     }
 
-    public Character getMarkerForOrDefault(Class c, Character def){
+    public Character getMarkerForOrDefault(Class c, Character def) {
         return this.markers.getOrDefault(c, def);
     }
 
-    public boolean containsMarker(Class c){
+    public boolean containsMarker(Class c) {
         return this.markers.containsKey(c);
     }
 
-    public Class getReverseMarkerFor(Character c){
+    public Class getReverseMarkerFor(Character c) {
         return this.reverseMarkers.get(c);
     }
 
-    public Class getReverseMarkerForOrDefault(Character c, Class cz){
+    public Class getReverseMarkerForOrDefault(Character c, Class cz) {
         return this.reverseMarkers.getOrDefault(c, cz);
     }
 
-    public boolean containsReverseMarker(Character c){
+    public boolean containsReverseMarker(Character c) {
         return this.reverseMarkers.containsKey(c);
     }
 
-    public TransactionResult getTransactionResultFor(Character c){
+    public TransactionResult getTransactionResultFor(Character c) {
         return this.results.get(c);
     }
 
-    public TransactionResult getTransactionResultForOrDefault(Character c, TransactionResult tr){
+    public TransactionResult getTransactionResultForOrDefault(Character c, TransactionResult tr) {
         return this.results.getOrDefault(c, tr);
     }
 
-    public boolean containsTransactionResult(Character c){
+    public boolean containsTransactionResult(Character c) {
         return this.results.containsKey(c);
     }
+
+    public void register(String key, Socket s) {
+        this.registeredCommands.put(key, s);
+    }
+
+    public Socket consume(String key) {
+        return this.registeredCommands.remove(key);
+    }
+
+    boolean readBuffer(SocketChannel channel, ByteBuffer buffer, int readLength) throws IOException {
+        int x = 0;
+        int c = 0;
+        ((Buffer)buffer).limit(readLength);
+        while (x < readLength && c != -1) {
+            c = channel.read(buffer);
+            x += c;
+        }
+        return c != -1;
+    }
+
+    public boolean writeBuffer(SocketChannel channel, ByteBuffer buffer, int writeLength) throws IOException {
+        int x = 0;
+        int c = 0;
+        ((Buffer)buffer).limit(writeLength);
+        while (x < writeLength && c != -1) {
+            c = channel.write(buffer);
+            x += c;
+        }
+        return c != -1;
+    }
+
+    public char getCharacterSuccess() {
+        return this.success;
+    }
+
+    public char getCharacterFailure() {
+        return this.failure;
+    }
+
 }

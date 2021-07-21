@@ -8,8 +8,8 @@ import com.fa993.hydra.core.Configuration;
 public class SocketConnectionProvider implements ConnectionProvider {
 
     private Configuration configs;
-    private SocketTransmitterConnection transmitter;
-    private SocketReceiverConnection receiver;
+    private TransmitterConnection transmitter;
+    private ReceiverConnection receiver;
 
     public SocketConnectionProvider(Configuration configs) {
         this.configs = configs;
