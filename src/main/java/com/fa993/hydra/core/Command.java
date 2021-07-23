@@ -7,16 +7,18 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-public class Command extends Parcel {
+public class Command implements Parcel {
+
+    private String id;
 
     private Map<String, String> headers;
 
     public Command() {
-        super(Utils.newId());
+        this.id = Utils.newId();
         this.headers = new HashMap<>();
     }
 
-    public String getValue(String header){
+    public String getValue(String header) {
         return this.headers.get(header);
     }
 
@@ -24,12 +26,21 @@ public class Command extends Parcel {
         this.headers.put(header, this.headers.getOrDefault(header, "") + value + ", ");
     }
 
-    public void setValue(String header, String value){
+    public void setValue(String header, String value) {
         this.headers.put(header, value);
     }
 
     public Set<String> getAllHeaders() {
         return this.headers.keySet();
     }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
 
 }

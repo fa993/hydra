@@ -3,34 +3,38 @@ package com.fa993.hydra.impl;
 import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.api.TransmitterConnection;
 import com.fa993.hydra.core.Command;
+import com.fa993.hydra.core.Token;
 import com.fa993.hydra.core.TransactionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.net.*;
+import java.net.InetAddress;
+import java.net.Socket;
+import java.net.URL;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.sql.Struct;
-import java.util.HashMap;
-import java.util.Map;
 
 public class SocketTransmitterConnection implements TransmitterConnection {
 
-    private static Logger logger = LoggerFactory.getLogger(SocketTransmitterConnection.class);
+    private static final Logger logger = LoggerFactory.getLogger(SocketTransmitterConnection.class);
 
-    private String myServer;
-    private ExchangeSpec spec;
+    private final String myServer;
+    private final ExchangeSpec spec;
 
     private String currentConnectedServerURL;
     private Socket currentSend;
 
+    private final byte[] centralBuffer;
+    private final byte[] secondaryBuffer;
+
     public SocketTransmitterConnection(String myServerURL, ExchangeSpec spec) {
         this.myServer = myServerURL;
         this.spec = spec;
+        this.centralBuffer = new byte[4096];
+        this.secondaryBuffer = new byte[4096];
     }
 
     @Override
@@ -42,9 +46,11 @@ public class SocketTransmitterConnection implements TransmitterConnection {
             } else {
                 operate = createConnection(serverURL);
             }
-            TransactionResult tr = doSend(parcel, operate);
-            currentSend = operate;
-            currentConnectedServerURL = serverURL;
+            TransactionResult tr = doSendMin(parcel, operate, this.centralBuffer);
+            if (tr != TransactionResult.FAILURE) {
+                currentSend = operate;
+                currentConnectedServerURL = serverURL;
+            }
             return tr;
         } catch (Exception e) {
             return TransactionResult.FAILURE;
@@ -55,12 +61,11 @@ public class SocketTransmitterConnection implements TransmitterConnection {
     public synchronized TransactionResult sendBack(Command c) {
         Socket returning = this.spec.consume(c.getId());
         try {
-            return doSend(c, returning.getChannel());
+            return doSendMin(c, returning, this.secondaryBuffer);
         } catch (Exception e) {
             try {
                 returning.close();
             } catch (Exception ex) {
-
             }
             return TransactionResult.FAILURE;
         }
@@ -96,7 +101,12 @@ public class SocketTransmitterConnection implements TransmitterConnection {
         BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         writer.write(spec.getMarkerFor(parcel.getClass()));
         writer.flush();
-        char res = (char) reader.read();
+        int i = reader.read();
+        if (i == -1) {
+            socket.close();
+            return TransactionResult.FAILURE;
+        }
+        char res = (char) i;
         if (res != this.spec.getCharacterSuccess()) {
             socket.close();
             logger.error("Response indicates that the server isn't ready to accept object");
@@ -106,7 +116,23 @@ public class SocketTransmitterConnection implements TransmitterConnection {
         writer.write(encoded + "\n");
         writer.flush();
         char c = (char) reader.read();
-        return spec.getTransactionResultForOrDefault(c, TransactionResult.VETOED);
+        return spec.containsReverseMarker(c) ? TransactionResult.SUCCESS : TransactionResult.VETOED;
+    }
+
+    private TransactionResult doSendMin(Parcel p, Socket socket, byte[] buffer) throws IOException {
+        InputStream is = socket.getInputStream();
+        OutputStream os = socket.getOutputStream();
+        Byte m = spec.getByteMarkerFor(p.getClass());
+        buffer[0] = m;
+        if (p instanceof Token) {
+            this.spec.serializeToken((Token) p, buffer, 1);
+            os.write(buffer, 0, 13);
+        } else if (p instanceof Command) {
+            //do something
+            //TODO
+        }
+        os.flush();
+        return this.spec.getSuccessByte() == ((byte) is.read()) ? TransactionResult.SUCCESS : TransactionResult.VETOED;
     }
 
 
@@ -131,7 +157,7 @@ public class SocketTransmitterConnection implements TransmitterConnection {
         if (!this.spec.writeBuffer(socketChannel, bufc, cap)) throw new Exception();
         ((Buffer) buffer).clear();
         if (!this.spec.readBuffer(socketChannel, buffer, 2)) throw new Exception();
-        return spec.getTransactionResultForOrDefault(buffer.getChar(0), TransactionResult.VETOED);
+        return spec.containsReverseMarker(buffer.getChar(0)) ? TransactionResult.SUCCESS : TransactionResult.VETOED;
     }
 
     private Socket createConnection(String url) throws IOException {

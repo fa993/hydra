@@ -6,24 +6,25 @@ import com.fa993.hydra.misc.Utils;
 import java.util.Map;
 import java.util.Objects;
 
-public class State extends Parcel {
+public class State implements Parcel {
+
+    private String id;
 
     private String ownerURL;
 
     private Map<String, String> contents;
 
     public State() {
-        super(null);
     }
 
     public State(String ownerURL, Map<String, String> contents) {
-        super(Utils.newId());
+        this.id = Utils.newId();
         this.ownerURL = ownerURL;
         this.contents = contents;
     }
 
     public State(State state) {
-        super(state.id);
+        this.id = state.id;
         this.ownerURL = state.ownerURL;
         this.contents = state.contents;
     }
@@ -38,6 +39,14 @@ public class State extends Parcel {
         State ret = reissue();
         ret.ownerURL = ownerURL;
         return ret;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
     }
 
     public String getOwnerURL() {

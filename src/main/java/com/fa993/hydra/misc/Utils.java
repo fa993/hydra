@@ -9,4 +9,8 @@ public class Utils {
     public static String newId() {
         return UUID.randomUUID().toString();
     }
+
+    public static long newLongId() {
+        return System.currentTimeMillis();
+    }
 }
