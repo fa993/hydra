@@ -137,20 +137,6 @@ public class Engine {
         }
     }
 
-//    /**
-//     * Get the most recent contents object
-//     *
-//     * @return the contents object which may or may not have originated from this server
-//     * @throws EngineNotInitializedException if the engine has not started yet
-//     */
-//    public static Map<String, String> contents() {
-//        if (singleton != null) {
-//            return singleton.lastSeenState.getContents();
-//        } else {
-//            throw new EngineNotInitializedException();
-//        }
-//    }
-
     /**
      * Check if this server is primary
      *
@@ -181,22 +167,6 @@ public class Engine {
             throw new EngineNotInitializedException();
         }
     }
-
-//    /**
-//     * Use this method to update the contents object to better reflect the state of this server
-//     *
-//     * @param contents the contents which will be passed to other servers if this server is primary
-//     */
-//    public static void pushContents(Map<String, String> contents) {
-//        if (singleton != null) {
-//            if (contents == null) {
-//                contents = EMPTY;
-//            }
-//            singleton.contents = contents;
-//        } else {
-//            throw new EngineNotInitializedException();
-//        }
-//    }
 
     private Engine(Map<String, String> contents, Runnable callback) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
         Token.initialize(10 + 1);
@@ -293,9 +263,6 @@ public class Engine {
                         this.lastSeenToken.setTokenIssuerIndex(this.configs.getCurrentServerIndex());
                         logger.info("Timed out... will attempt to become primary: " + this.lastSeenToken.toLog());
                         this.discountOrders.add(this.lastSeenToken);
-//                        WorkOrder w1 = new WorkOrder(System.currentTimeMillis(), this.lastSeenToken, Status.PENDING);
-//                        w1.on(Status.SUCCESS, () -> this.callback.run());
-//                        this.orders.add(w1);
                     }
                 } else {
                     //Check for veto now
@@ -346,7 +313,9 @@ public class Engine {
                         }
                     } else {
                         //theOneTrueKingIsNotYou()
-                        Token.reclaimToken(this.lastSeenToken);
+                        if (this.lastSeenToken != null) {
+                            Token.reclaimToken(this.lastSeenToken);
+                        }
                         this.lastSeenToken = t;
                         logger.trace("Not Primary");
                     }
