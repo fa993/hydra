@@ -54,11 +54,11 @@ public class Engine {
 
     private boolean stopTransmitting;
 
-    private LinkedBlockingQueue<WorkOrder> orders;
+    private LinkedBlockingQueue<Parcel> discountOrders;
 
     private Runnable callback;
 
-//    private Map<String, String> contents;
+    private boolean isPrimary;
 
     //TODO consider changing to single thread executor to maintain temporal integrity of execution callbacks
     private ExecutorService executor = Executors.newCachedThreadPool((r) -> {
@@ -159,7 +159,7 @@ public class Engine {
      */
     public static boolean isPrimary() {
         if (singleton != null) {
-            return singleton.lastSeenToken.getTokenIssuerIndex() == singleton.configs.getCurrentServerIndex();
+            return singleton.isPrimary;
         } else {
             throw new EngineNotInitializedException();
         }
@@ -200,7 +200,6 @@ public class Engine {
 
     private Engine(Map<String, String> contents, Runnable callback) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
         Token.initialize(10 + 1);
-        Transaction.initialize(10);
         this.configs = readConfigFile();
         try {
             this.provider = (ConnectionProvider) Class.forName(this.configs.getConnectionProvider()).getConstructor(Configuration.class).newInstance(this.configs);
@@ -220,13 +219,8 @@ public class Engine {
         this.stopTransmitting = false;
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
-        this.orders = new LinkedBlockingQueue<>();
+        this.discountOrders = new LinkedBlockingQueue<>();
         this.proposedNextTokensIssuerId = new LinkedBlockingQueue<>();
-//        if (contents != null) {
-//            this.contents = contents;
-//        } else {
-//            this.contents = EMPTY;
-//        }
         if (callback != null) {
             this.callback = callback;
         } else {
@@ -244,7 +238,6 @@ public class Engine {
             }
 
         };
-        this.provider.getReceiver().configureValidatorForState(validator);
         this.coreActions = new HashMap<>();
         this.coreActions.put(Headers.CURRENT_ACTIVE_CLUSTER_MARKER, t -> {
             t.appendValue(Headers.CURRENT_ACTIVE_CLUSTER, this.reordered.getServerURL());
@@ -262,7 +255,6 @@ public class Engine {
     public Configuration readConfigFile() throws NoConfigurationFileException, MalformedConfigurationFileException {
         try {
             return mapper.readValue(this.getClass().getClassLoader().getResourceAsStream("waterfall.json"), Configuration.class);
-//            return mapper.readValue(new File("src/main/resources/waterfall.json"), Configuration.class);
         } catch (JsonParseException e) {
             throw new MalformedConfigurationFileException(e);
         } catch (IOException e) {
@@ -272,124 +264,93 @@ public class Engine {
 
     public void run() {
         Thread t1 = new Thread(() -> {
-            while (!stopTransmitting || orders.size() > 0) {
+            while (!stopTransmitting || discountOrders.size() > 0) {
                 try {
-                    WorkOrder order = this.orders.take();
-                    long t = order.executeAfter - System.currentTimeMillis();
-                    if (t > 0) {
-                        Thread.sleep(t);
-                    }
-                    Transaction transaction = Transaction.getTransaction(poolTimeout);
-                    sendToFirstActiveServer(transaction, order.associatedParcel);
-                    switch (transaction.getResult()) {
-                        case VETOED:
-                            logger.trace("The send was vetoed");
-                            order.status = Status.VETOED;
-                            break;
-                        case SUCCESS:
-                            logger.trace("Sent parcel to " + transaction.getServerTo());
-                            order.status = Status.SUCCESS;
-                            break;
-                    }
-                    executor.execute(() -> order.get(order.status).run());
-                    Transaction.reclaimTransaction(transaction);
+                    sendToFirstActiveServer(this.discountOrders.take());
                 } catch (InterruptedException e) {
                     logger.debug("Interrupted", e);
-                } catch (ObjectPoolExhaustedException ex) {
-                    logger.debug("Object pool has been exhausted");
-                    Engine.stop();
                 }
             }
         }, "Hydra-Transmitting-Thread");
         Thread t2 = new Thread(() -> {
             while (!stopReceiving) {
-                Transaction tr = null;
-                try {
-                    tr = this.provider.getReceiver().receiveToken(this.connectionTimeout);
-                } catch (ObjectPoolExhaustedException e) {
-                    e.printStackTrace();
-                    Engine.stop();
-                    continue;
-                }
-                Parcel p = tr.getParcel();
-                TransactionResult r = tr.getResult();
-                Transaction.reclaimTransaction(tr);
-                switch (r) {
-                    case SUCCESS:
-                        Token token = (Token) p;
-                        logger.trace("Received state: " + token.toLog());
-                        long execTime = System.currentTimeMillis();
-                        Runnable onSuccess = () -> {
-                        };
-                        if (token.equals(this.lastSeenToken)) {
-                            //theOneTrueKingIsYouAgain()
+                Token t = this.provider.getReceiver().receiveToken(this.connectionTimeout);
+                if (t == null) {
+                    //Timeout
+                    if (!this.stopReceiving) {
+                        //theOneTrueKingIsYou();
+                        if (this.lastSeenToken != null) {
                             Token.reclaimToken(this.lastSeenToken);
-                            token.reissue();
-                            this.lastSeenToken = token;
-                            Integer candidate = this.proposedNextTokensIssuerId.poll();
-                            if (candidate == null) {
-                                logger.trace("Retained Primary: " + this.lastSeenToken.toLog());
-                            } else {
-                                token.setTokenId(candidate);
-                                logger.trace("Shifting Primary: " + this.lastSeenToken.toLog());
-                            }
-                            try {
-                                Thread.sleep(this.heartbeatDelay);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                            //execTime = System.currentTimeMillis() + this.heartbeatDelay;
-                        } else if (token.getTokenIssuerIndex() == this.configs.getCurrentServerIndex()) {
-                            logger.trace("Got Primary");
-                            token.reissue();
-                            if (this.lastSeenToken.getTokenIssuerIndex() != this.configs.getCurrentServerIndex()) {
-                                onSuccess = () -> this.callback.run();
-                            }
-                            Token.reclaimToken(this.lastSeenToken);
-                            this.lastSeenToken = token;
-                            //execTime = System.currentTimeMillis() + this.heartbeatDelay;
-                            try {
-                                Thread.sleep(this.heartbeatDelay);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
+                        }
+                        try {
+                            this.lastSeenToken = Token.getToken(poolTimeout);
+                        } catch (ObjectPoolExhaustedException e) {
+                            logger.debug("Object pool has been exhausted");
+                            Engine.stop();
+                            continue;
+                        }
+                        this.lastSeenToken.reissue();
+                        this.lastSeenToken.setTokenIssuerIndex(this.configs.getCurrentServerIndex());
+                        logger.info("Timed out... will attempt to become primary: " + this.lastSeenToken.toLog());
+                        this.discountOrders.add(this.lastSeenToken);
+//                        WorkOrder w1 = new WorkOrder(System.currentTimeMillis(), this.lastSeenToken, Status.PENDING);
+//                        w1.on(Status.SUCCESS, () -> this.callback.run());
+//                        this.orders.add(w1);
+                    }
+                } else {
+                    //Check for veto now
+                    if (this.lastSeenToken != null && this.configs.getCurrentServerIndex() == this.lastSeenToken.getTokenIssuerIndex() && !(this.configs.getCurrentServerIndex() == t.getTokenIssuerIndex())) {
+                        //Split brain hit!
+                        int x1 = t.getTokenIssuerIndex();
+                        int x2 = this.configs.getCurrentServerIndex();
+                        if (x1 - x2 < 0) {
+                            //veto now
+                            Token.reclaimToken(t);
+                            logger.trace("Rejected a state to avoid split brain");
+                            continue;
+                        }
+                    }
+                    //do not veto
+                    logger.trace("Received state: " + t.toLog());
+                    if (t.equals(this.lastSeenToken)) {
+                        //theOneTrueKingIsYouAgain()
+                        Token.reclaimToken(this.lastSeenToken);
+                        t.reissue();
+                        this.lastSeenToken = t;
+                        Integer candidate = this.proposedNextTokensIssuerId.poll();
+                        if (candidate == null) {
+                            logger.trace("Retained Primary: " + this.lastSeenToken.toLog());
+                            if (!isPrimary) {
+                                isPrimary = true;
+                                this.executor.execute(() -> callback.run());
                             }
                         } else {
-                            //theOneTrueKingIsNotYou()
-                            Token.reclaimToken(this.lastSeenToken);
-                            this.lastSeenToken = token;
-                            logger.trace("Not Primary");
+                            this.lastSeenToken.setTokenId(candidate);
+                            logger.trace("Shifting Primary: " + this.lastSeenToken.toLog());
+                            isPrimary = false;
                         }
-                        WorkOrder w = new WorkOrder(execTime, this.lastSeenToken, Status.PENDING);
-                        w.on(Status.SUCCESS, onSuccess);
-                        this.orders.add(w);
-                        break;
-                    case TIMEOUT:
-                        if (!this.stopReceiving) {
-                            //theOneTrueKingIsYou();
-                            if (this.lastSeenToken != null) {
-                                Token.reclaimToken(this.lastSeenToken);
-                            }
-                            try {
-                                this.lastSeenToken = Token.getToken(poolTimeout);
-                            } catch (ObjectPoolExhaustedException e) {
-                                logger.debug("Object pool has been exhausted");
-                                Engine.stop();
-                                continue;
-                            }
-                            this.lastSeenToken.reissue();
-                            this.lastSeenToken.setTokenIssuerIndex(this.configs.getCurrentServerIndex());
-                            logger.info("Became Primary due to timeout: " + this.lastSeenToken.toLog());
-                            WorkOrder w1 = new WorkOrder(System.currentTimeMillis(), this.lastSeenToken, Status.PENDING);
-                            w1.on(Status.SUCCESS, () -> this.callback.run());
-                            this.orders.add(w1);
+                        try {
+                            Thread.sleep(this.heartbeatDelay);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
                         }
-                        break;
-                    case VETOED:
-                        logger.trace("Rejected a state to avoid split brain");
-                        break;
-                    case FAILURE:
-                        logger.trace("Some unknown failure occurred");
-                        break;
+                    } else if (t.getTokenIssuerIndex() == this.configs.getCurrentServerIndex()) {
+                        logger.trace("Got Primary");
+                        t.reissue();
+                        Token.reclaimToken(this.lastSeenToken);
+                        this.lastSeenToken = t;
+                        try {
+                            Thread.sleep(this.heartbeatDelay);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    } else {
+                        //theOneTrueKingIsNotYou()
+                        Token.reclaimToken(this.lastSeenToken);
+                        this.lastSeenToken = t;
+                        logger.trace("Not Primary");
+                    }
+                    this.discountOrders.add(this.lastSeenToken);
                 }
                 this.lastActiveTime = Instant.now();
                 stopTransmitting = stopReceiving;
@@ -397,34 +358,15 @@ public class Engine {
         }, "Hydra-Receive-State-Thread");
         Thread t3 = new Thread(() -> {
             while (!stopReceiving) {
-                Transaction transaction = null;
-                try {
-                    transaction = this.provider.getReceiver().receiveCommand();
-                } catch (ObjectPoolExhaustedException e) {
-                    e.printStackTrace();
-                }
-                Parcel p = transaction.getParcel();
-                TransactionResult r = transaction.getResult();
-                Transaction.reclaimTransaction(transaction);
-                switch (r) {
-                    case SUCCESS:
-                        //handleCommand
-                        Command command = (Command) p;
-                        command.getAllHeaders().forEach(t -> {
-                            boolean b1 = this.coreActions.getOrDefault(t, f -> true).apply(command);
-                            if (b1) {
-                                executor.execute(() -> this.applicationActions.getOrDefault(t, f -> {
-                                }).accept(command));
-                            }
-                        });
-                        this.orders.add(new WorkOrder(System.currentTimeMillis(), command, Status.PENDING));
-                        break;
-                    case FAILURE:
-                        logger.trace("Unknown Failure occurred");
-                        break;
-                    default:
-                        logger.trace("This is an error... receiver can only return failure or success according to the specs");
-                }
+                Command c = this.provider.getReceiver().receiveCommand();
+                c.getAllHeaders().forEach(t -> {
+                    boolean b1 = this.coreActions.getOrDefault(t, f -> true).apply(c);
+                    if (b1) {
+                        executor.execute(() -> this.applicationActions.getOrDefault(t, f -> {
+                        }).accept(c));
+                    }
+                });
+                this.discountOrders.add(c);
             }
         }, "Hydra-Receive-Command-Thread");
         t1.setDaemon(true);
@@ -435,18 +377,17 @@ public class Engine {
         t3.start();
     }
 
-    private void sendToFirstActiveServer(Transaction buffer, Parcel parcel) {
+    private void sendToFirstActiveServer(Parcel parcel) {
         Server n = this.reordered;
-        TransactionResult result;
+        boolean result;
         do {
             n = n.getNext();
             result = trySend(n.getServerURL(), parcel);
-        } while (result == TransactionResult.FAILURE || result == TransactionResult.TIMEOUT);
-        buffer.setResult(result);
-        buffer.setServerTo(n.getServerURL());
+        } while (!result);
+        logger.trace("Sent parcel to " + n.getServerURL());
     }
 
-    private TransactionResult trySend(String thisServer, Parcel parcel) {
+    private boolean trySend(String thisServer, Parcel parcel) {
         return this.provider.getTransmitter().send(thisServer, parcel);
     }
 

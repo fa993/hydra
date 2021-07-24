@@ -1,7 +1,6 @@
 package com.fa993.hydra.impl;
 
 import com.fa993.hydra.core.Command;
-import com.fa993.hydra.core.State;
 import com.fa993.hydra.core.Token;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -22,36 +21,24 @@ public class ExchangeSpec {
 
     private final ObjectMapper obm;
 
-    private final Map<Class<?>, Character> markers;
-    private final Map<Character, Class<?>> reverseMarkers;
     private final Map<Class<?>, Byte> byteMarkers;
     private final Map<Byte, Class<?>> reverseByteMarkers;
     private final Map<String, Socket> registeredCommands;
-    private char success;
-    private char failure;
     private byte successByte;
     private byte failureByte;
 
     public ExchangeSpec() {
         this.obm = new ObjectMapper();
-        this.markers = new HashMap<>();
-        this.reverseMarkers = new HashMap<>();
         this.byteMarkers = new HashMap<>();
         this.reverseByteMarkers = new HashMap<>();
         this.registeredCommands = new ConcurrentHashMap<>();
     }
 
     public void init() {
-        this.markers.put(State.class, 's');
-        this.markers.put(Command.class, 'c');
-        this.reverseMarkers.put('s', State.class);
-        this.reverseMarkers.put('c', Command.class);
         this.byteMarkers.put(Token.class, (byte) 1);
         this.byteMarkers.put(Command.class, (byte) 2);
         this.reverseByteMarkers.put((byte) 1, Token.class);
         this.reverseByteMarkers.put((byte) 2, Command.class);
-        this.success = 'n';
-        this.failure = 'f';
         this.successByte = 0;
         this.failureByte = 1;
     }
@@ -62,30 +49,6 @@ public class ExchangeSpec {
 
     public <T> T decode(String s, Class<T> c) throws Exception {
         return obm.readValue(s, c);
-    }
-
-    public Character getMarkerFor(Class c) {
-        return this.markers.get(c);
-    }
-
-    public Character getMarkerForOrDefault(Class c, Character def) {
-        return this.markers.getOrDefault(c, def);
-    }
-
-    public boolean containsMarker(Class c) {
-        return this.markers.containsKey(c);
-    }
-
-    public Class getReverseMarkerFor(Character c) {
-        return this.reverseMarkers.get(c);
-    }
-
-    public Class getReverseMarkerForOrDefault(Character c, Class cz) {
-        return this.reverseMarkers.getOrDefault(c, cz);
-    }
-
-    public boolean containsReverseMarker(Character c) {
-        return this.reverseMarkers.containsKey(c);
     }
 
     public Byte getByteMarkerFor(Class c) {
@@ -150,14 +113,6 @@ public class ExchangeSpec {
             x += c;
         }
         return c != -1;
-    }
-
-    public char getCharacterSuccess() {
-        return this.success;
-    }
-
-    public char getCharacterFailure() {
-        return this.failure;
     }
 
     public byte getSuccessByte() {
