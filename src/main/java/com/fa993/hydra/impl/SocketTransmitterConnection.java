@@ -3,7 +3,6 @@ package com.fa993.hydra.impl;
 import com.fa993.hydra.api.Parcel;
 import com.fa993.hydra.api.TransmitterConnection;
 import com.fa993.hydra.core.Command;
-import com.fa993.hydra.core.Token;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +15,7 @@ import java.net.URL;
 
 public class SocketTransmitterConnection implements TransmitterConnection {
 
-    private static final int MAX_WAIT_TIME = 5000;
+    private static final int MAX_WAIT_TIME = 200;
 
     private static final Logger logger = LoggerFactory.getLogger(SocketTransmitterConnection.class);
 
@@ -64,6 +63,33 @@ public class SocketTransmitterConnection implements TransmitterConnection {
     }
 
     @Override
+    public synchronized boolean send(String serverURL, Integer token) {
+        Socket operate = null;
+        try {
+            if (currentConnectedServerURL != null && currentConnectedServerURL.equals(serverURL)) {
+                operate = currentSend;
+            } else {
+                operate = createConnection(serverURL);
+            }
+            boolean b = doSendMin(token, operate, this.centralBuffer);
+            if (b) {
+                currentSend = operate;
+                currentConnectedServerURL = serverURL;
+            }
+            return b;
+        } catch (Exception e) {
+            try {
+                if (operate != null) {
+                    operate.close();
+                }
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+            return false;
+        }
+    }
+
+    @Override
     public synchronized boolean sendBack(Command c) {
         try (Socket returning = this.spec.consume(c.getId())) {
             return doSendMin(c, returning, this.secondaryBuffer);
@@ -77,17 +103,25 @@ public class SocketTransmitterConnection implements TransmitterConnection {
         OutputStream os = socket.getOutputStream();
         Byte m = spec.getByteMarkerFor(p.getClass());
         buffer[0] = m;
-        if (p instanceof Token) {
-            this.spec.serializeToken((Token) p, buffer, 1);
-            os.write(buffer, 0, 13);
-        } else if (p instanceof Command) {
+        if (p instanceof Command) {
             //do something
             //TODO
         }
         os.flush();
-        socket.setSoTimeout(MAX_WAIT_TIME);
         return this.spec.getSuccessByte() == ((byte) is.read());
     }
+
+    private boolean doSendMin(Integer i, Socket socket, byte[] buffer) throws IOException {
+        InputStream is = socket.getInputStream();
+        OutputStream os = socket.getOutputStream();
+        Byte m = spec.getByteMarkerFor(Integer.class);
+        buffer[0] = m;
+        this.spec.serializeToken(i, buffer, 1);
+        os.write(buffer, 0, 5);
+        os.flush();
+        return this.spec.getSuccessByte() == ((byte) is.read());
+    }
+
 
     private Socket createConnection(String url) throws IOException {
         URL urlTo = new URL(url);

@@ -6,6 +6,13 @@ public interface TransmitterConnection {
 
     /**
      * @param serverURL The server to be sent to
+     * @param token     the integer representing the index of this server in the configuration file
+     * @return true if the send is successful, false otherwise
+     */
+    public boolean send(String serverURL, Integer token);
+
+    /**
+     * @param serverURL The server to be sent to
      * @param parcel    the parcel that must be sent
      * @return true if the send is successful, false otherwise
      */

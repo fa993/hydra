@@ -38,7 +38,7 @@ public class Engine {
 
     private ConnectionProvider provider;
 
-    private Token lastSeenToken;
+    private Integer lastSeenToken;
 
     private Queue<Integer> proposedNextTokensIssuerId;
 
@@ -54,11 +54,15 @@ public class Engine {
 
     private boolean stopTransmitting;
 
-    private LinkedBlockingQueue<Parcel> discountOrders;
+    private LinkedBlockingQueue<Integer> tokens;
+
+    private LinkedBlockingQueue<Parcel> orders;
 
     private Runnable callback;
 
-    private boolean isPrimary;
+    private volatile boolean primary;
+
+    private int serversLength;
 
     //TODO consider changing to single thread executor to maintain temporal integrity of execution callbacks
     private ExecutorService executor = Executors.newCachedThreadPool((r) -> {
@@ -66,8 +70,6 @@ public class Engine {
         t.setDaemon(true);
         return t;
     });
-
-    private final Function<Token, Boolean> validator;
 
     private final Map<String, Function<Command, Boolean>> coreActions;
 
@@ -145,7 +147,7 @@ public class Engine {
      */
     public static boolean isPrimary() {
         if (singleton != null) {
-            return singleton.isPrimary;
+            return singleton.primary;
         } else {
             throw new EngineNotInitializedException();
         }
@@ -169,7 +171,6 @@ public class Engine {
     }
 
     private Engine(Map<String, String> contents, Runnable callback) throws NoConfigurationFileException, MalformedConfigurationFileException, InvalidConnectionProviderException {
-        Token.initialize(10 + 1);
         this.configs = readConfigFile();
         try {
             this.provider = (ConnectionProvider) Class.forName(this.configs.getConnectionProvider()).getConstructor(Configuration.class).newInstance(this.configs);
@@ -178,7 +179,8 @@ public class Engine {
         }
         Server og = new Server(this.configs.getServers()[(this.configs.getCurrentServerIndex()) % this.configs.getServers().length]);
         this.reordered = og;
-        for (int i = 1; i < this.configs.getServers().length; i++) {
+        this.serversLength = this.configs.getServers().length;
+        for (int i = 1; i < this.serversLength; i++) {
             Server n = new Server(this.configs.getServers()[(i + this.configs.getCurrentServerIndex()) % this.configs.getServers().length]);
             this.reordered.setNext(n);
             this.reordered = n;
@@ -189,32 +191,21 @@ public class Engine {
         this.stopTransmitting = false;
         this.stopReceiving = false;
         this.heartbeatDelay = this.configs.getHeartbeatTime();
-        this.discountOrders = new LinkedBlockingQueue<>();
+        this.orders = new LinkedBlockingQueue<>();
+        this.tokens = new LinkedBlockingQueue<>();
         this.proposedNextTokensIssuerId = new LinkedBlockingQueue<>();
         if (callback != null) {
             this.callback = callback;
         } else {
             this.callback = DO_NOTHING;
         }
-        this.validator = (st) -> {
-            if (this.lastSeenToken != null && this.configs.getCurrentServerIndex() == this.lastSeenToken.getTokenIssuerIndex() && !(this.configs.getCurrentServerIndex() == st.getTokenIssuerIndex())) {
-                //Split brain hit!
-                int x1 = st.getTokenIssuerIndex();
-                int x2 = this.configs.getCurrentServerIndex();
-                //only reject flow from one side
-                return x1 - x2 >= 0;
-            } else {
-                return true;
-            }
-
-        };
         this.coreActions = new HashMap<>();
         this.coreActions.put(Headers.CURRENT_ACTIVE_CLUSTER_MARKER, t -> {
             t.appendValue(Headers.CURRENT_ACTIVE_CLUSTER, this.reordered.getServerURL());
             return true;
         });
         this.coreActions.put(Headers.FORCE_CORONATION, t -> {
-            if (this.lastSeenToken != null && this.lastSeenToken.getTokenIssuerIndex() == singleton.configs.getCurrentServerIndex()) {
+            if (this.lastSeenToken != null && this.lastSeenToken == singleton.configs.getCurrentServerIndex()) {
                 this.proposedNextTokensIssuerId.add(Integer.parseInt(t.getValue(Headers.FORCE_CORONATION)));
                 return true;
             } else return false;
@@ -234,98 +225,75 @@ public class Engine {
 
     public void run() {
         Thread t1 = new Thread(() -> {
-            while (!stopTransmitting || discountOrders.size() > 0) {
+            while (!stopTransmitting || tokens.size() > 0) {
                 try {
-                    sendToFirstActiveServer(this.discountOrders.take());
+                    sendToFirstActiveServer(this.tokens.take());
                 } catch (InterruptedException e) {
                     logger.debug("Interrupted", e);
                 }
             }
-        }, "Hydra-Transmitting-Thread");
+        }, "Hydra-Token-Transmitting-Thread");
         Thread t2 = new Thread(() -> {
+            while (!stopTransmitting || orders.size() > 0) {
+                try {
+                    sendToFirstActiveServer(this.orders.take());
+                } catch (InterruptedException e) {
+                    logger.debug("Interrupted", e);
+                }
+            }
+        }, "Hydra-Parcel-Transmitting-Thread");
+        Thread t3 = new Thread(() -> {
             while (!stopReceiving) {
-                Token t = this.provider.getReceiver().receiveToken(this.connectionTimeout);
-                if (t == null) {
+                Integer i = this.provider.getReceiver().receiveToken(this.connectionTimeout);
+                if (i == null) {
                     //Timeout
                     if (!this.stopReceiving) {
                         //theOneTrueKingIsYou();
-                        if (this.lastSeenToken != null) {
-                            Token.reclaimToken(this.lastSeenToken);
-                        }
-                        try {
-                            this.lastSeenToken = Token.getToken(poolTimeout);
-                        } catch (ObjectPoolExhaustedException e) {
-                            logger.debug("Object pool has been exhausted");
-                            Engine.stop();
-                            continue;
-                        }
-                        this.lastSeenToken.reissue();
-                        this.lastSeenToken.setTokenIssuerIndex(this.configs.getCurrentServerIndex());
-                        logger.info("Timed out... will attempt to become primary: " + this.lastSeenToken.toLog());
-                        this.discountOrders.add(this.lastSeenToken);
-                    }
+                        this.lastSeenToken = this.configs.getCurrentServerIndex();
+                        logger.info("Timed out... will attempt to become primary");
+                    } else continue;
                 } else {
                     //Check for veto now
-                    if (this.lastSeenToken != null && this.configs.getCurrentServerIndex() == this.lastSeenToken.getTokenIssuerIndex() && !(this.configs.getCurrentServerIndex() == t.getTokenIssuerIndex())) {
+                    logger.trace("Received token: " + i);
+                    if (this.lastSeenToken != null && this.configs.getCurrentServerIndex() == this.lastSeenToken && (i - this.configs.getCurrentServerIndex() < 0)) {
                         //Split brain hit!
-                        int x1 = t.getTokenIssuerIndex();
-                        int x2 = this.configs.getCurrentServerIndex();
-                        if (x1 - x2 < 0) {
-                            //veto now
-                            Token.reclaimToken(t);
-                            logger.trace("Rejected a state to avoid split brain");
-                            continue;
-                        }
+                        logger.trace("Rejected a token to avoid split brain");
+                        continue;
                     }
                     //do not veto
-                    logger.trace("Received state: " + t.toLog());
-                    if (t.equals(this.lastSeenToken)) {
+                    if (i == this.configs.getCurrentServerIndex()) {
                         //theOneTrueKingIsYouAgain()
-                        Token.reclaimToken(this.lastSeenToken);
-                        t.reissue();
-                        this.lastSeenToken = t;
                         Integer candidate = this.proposedNextTokensIssuerId.poll();
                         if (candidate == null) {
-                            logger.trace("Retained Primary: " + this.lastSeenToken.toLog());
-                            if (!isPrimary) {
-                                isPrimary = true;
+                            logger.trace("I am Primary");
+                            if (!primary) {
+                                primary = true;
                                 this.executor.execute(() -> callback.run());
                             }
+                            try {
+                                Thread.sleep(this.heartbeatDelay);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
                         } else {
-                            this.lastSeenToken.setTokenId(candidate);
-                            logger.trace("Shifting Primary: " + this.lastSeenToken.toLog());
-                            isPrimary = false;
-                        }
-                        try {
-                            Thread.sleep(this.heartbeatDelay);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
-                    } else if (t.getTokenIssuerIndex() == this.configs.getCurrentServerIndex()) {
-                        logger.trace("Got Primary");
-                        t.reissue();
-                        Token.reclaimToken(this.lastSeenToken);
-                        this.lastSeenToken = t;
-                        try {
-                            Thread.sleep(this.heartbeatDelay);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
+                            this.lastSeenToken = candidate;
+                            logger.trace("Shifting Primary");
+                            primary = false;
                         }
                     } else {
                         //theOneTrueKingIsNotYou()
-                        if (this.lastSeenToken != null) {
-                            Token.reclaimToken(this.lastSeenToken);
-                        }
-                        this.lastSeenToken = t;
+                        this.lastSeenToken = i;
                         logger.trace("Not Primary");
                     }
-                    this.discountOrders.add(this.lastSeenToken);
+                }
+                if (this.lastSeenToken != null) {
+                    this.tokens.add(this.lastSeenToken);
                 }
                 this.lastActiveTime = Instant.now();
                 stopTransmitting = stopReceiving;
             }
         }, "Hydra-Receive-State-Thread");
-        Thread t3 = new Thread(() -> {
+        Thread t4 = new Thread(() -> {
             while (!stopReceiving) {
                 Command c = this.provider.getReceiver().receiveCommand();
                 c.getAllHeaders().forEach(t -> {
@@ -335,29 +303,56 @@ public class Engine {
                         }).accept(c));
                     }
                 });
-                this.discountOrders.add(c);
+                this.orders.add(c);
             }
         }, "Hydra-Receive-Command-Thread");
         t1.setDaemon(true);
         t2.setDaemon(true);
         t3.setDaemon(true);
+        t4.setDaemon(true);
         t1.start();
         t2.start();
         t3.start();
+        t4.start();
     }
 
     private void sendToFirstActiveServer(Parcel parcel) {
         Server n = this.reordered;
         boolean result;
+        int x = 0;
         do {
             n = n.getNext();
             result = trySend(n.getServerURL(), parcel);
-        } while (!result);
-        logger.trace("Sent parcel to " + n.getServerURL());
+        } while (!result && x < this.serversLength);
+        if (!result) {
+            logger.trace("Could not send parcel");
+        } else {
+            logger.trace("Sent parcel to " + n.getServerURL());
+        }
+    }
+
+    private void sendToFirstActiveServer(Integer i) {
+        Server n = this.reordered;
+        boolean result;
+        int x = 0;
+        do {
+            n = n.getNext();
+            result = trySend(n.getServerURL(), i);
+            x++;
+        } while (!result && x < this.serversLength);
+        if (!result) {
+            logger.trace("Could not send token");
+        } else {
+            logger.trace("Sent token to " + n.getServerURL());
+        }
     }
 
     private boolean trySend(String thisServer, Parcel parcel) {
         return this.provider.getTransmitter().send(thisServer, parcel);
+    }
+
+    private boolean trySend(String thisServer, Integer i) {
+        return this.provider.getTransmitter().send(thisServer, i);
     }
 
 }

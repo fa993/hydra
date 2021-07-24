@@ -1,7 +1,6 @@
 package com.fa993.hydra.impl;
 
 import com.fa993.hydra.core.Command;
-import com.fa993.hydra.core.Token;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -35,9 +34,9 @@ public class ExchangeSpec {
     }
 
     public void init() {
-        this.byteMarkers.put(Token.class, (byte) 1);
+        this.byteMarkers.put(Integer.class, (byte) 1);
         this.byteMarkers.put(Command.class, (byte) 2);
-        this.reverseByteMarkers.put((byte) 1, Token.class);
+        this.reverseByteMarkers.put((byte) 1, Integer.class);
         this.reverseByteMarkers.put((byte) 2, Command.class);
         this.successByte = 0;
         this.failureByte = 1;
@@ -83,28 +82,6 @@ public class ExchangeSpec {
         return this.registeredCommands.remove(key);
     }
 
-    public boolean readBuffer(SocketChannel channel, ByteBuffer buffer, int readLength) throws IOException {
-        int x = 0;
-        int c = 0;
-        ((Buffer) buffer).limit(readLength);
-        while (x < readLength && c != -1) {
-            c = channel.read(buffer);
-            x += c;
-        }
-        return c != -1;
-    }
-
-    public boolean writeBuffer(SocketChannel channel, ByteBuffer buffer, int writeLength) throws IOException {
-        int x = 0;
-        int c = 0;
-        ((Buffer) buffer).limit(writeLength);
-        while (x < writeLength && c != -1) {
-            c = channel.write(buffer);
-            x += c;
-        }
-        return c != -1;
-    }
-
     public boolean readBuffer(InputStream is, byte[] buffer, int offset, int readLength) throws IOException {
         int x = 0;
         int c = 0;
@@ -115,6 +92,10 @@ public class ExchangeSpec {
         return c != -1;
     }
 
+    public int readInt(InputStream is) throws IOException {
+        return (is.read() << 24) | (is.read() << 16) | (is.read() << 8) | (is.read() << 0);
+    }
+
     public byte getSuccessByte() {
         return successByte;
     }
@@ -123,24 +104,15 @@ public class ExchangeSpec {
         return failureByte;
     }
 
-    public void serializeToken(Token t, byte[] buffer, int offset) {
-        buffer[offset + 0] = (byte) ((t.getTokenIssuerIndex() >> 24) & 0xFF);
-        buffer[offset + 1] = (byte) ((t.getTokenIssuerIndex() >> 16) & 0xFF);
-        buffer[offset + 2] = (byte) ((t.getTokenIssuerIndex() >> 8) & 0xFF);
-        buffer[offset + 3] = (byte) ((t.getTokenIssuerIndex() >> 0) & 0xFF);
-        buffer[offset + 4] = (byte) ((t.getTokenId() >> 56) & 0xFF);
-        buffer[offset + 5] = (byte) ((t.getTokenId() >> 48) & 0xFF);
-        buffer[offset + 6] = (byte) ((t.getTokenId() >> 40) & 0xFF);
-        buffer[offset + 7] = (byte) ((t.getTokenId() >> 32) & 0xFF);
-        buffer[offset + 8] = (byte) ((t.getTokenId() >> 24) & 0xFF);
-        buffer[offset + 9] = (byte) ((t.getTokenId() >> 16) & 0xFF);
-        buffer[offset + 10] = (byte) ((t.getTokenId() >> 8) & 0xFF);
-        buffer[offset + 11] = (byte) ((t.getTokenId() >> 0) & 0xFF);
+    public void serializeToken(int i, byte[] buffer, int offset) {
+        buffer[offset + 0] = (byte) ((i >> 24) & 0xFF);
+        buffer[offset + 1] = (byte) ((i >> 16) & 0xFF);
+        buffer[offset + 2] = (byte) ((i >> 8) & 0xFF);
+        buffer[offset + 3] = (byte) ((i >> 0) & 0xFF);
     }
 
-    public void deserializeToken(byte[] buffer, int offset, Token t1) {
-        t1.setTokenId(byteArrayToLong(buffer, offset + 4));
-        t1.setTokenIssuerIndex(byteArrayToInt(buffer, offset + 0));
+    public int deserializeToken(byte[] buffer, int offset) {
+        return byteArrayToInt(buffer, offset);
     }
 
     public int byteArrayToInt(byte[] buffer, int start) {

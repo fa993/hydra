@@ -1,7 +1,6 @@
 package com.fa993.hydra.api;
 
 import com.fa993.hydra.core.Command;
-import com.fa993.hydra.core.Token;
 
 public interface ReceiverConnection {
 
@@ -10,9 +9,9 @@ public interface ReceiverConnection {
      * Impl Note: This method must block for at most the amount of time in timeout
      *
      * @param timeout the maximum time after which this method must return
-     * @return A {@link Token} object
+     * @return an integer object conforming to the index of this server in the config file
      */
-    public Token receiveToken(int timeout);
+    public Integer receiveToken(int timeout);
 
     /**
      * Impl Note: This method must block until a command is received

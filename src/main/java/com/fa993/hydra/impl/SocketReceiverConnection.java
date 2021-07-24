@@ -2,7 +2,6 @@ package com.fa993.hydra.impl;
 
 import com.fa993.hydra.api.ReceiverConnection;
 import com.fa993.hydra.core.Command;
-import com.fa993.hydra.core.Token;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,7 +24,8 @@ public class SocketReceiverConnection implements ReceiverConnection, AutoCloseab
     private ExchangeSpec spec;
 
     private LinkedBlockingQueue<Command> collectedCommands;
-    private LinkedBlockingQueue<Token> collectedTokens;
+    private LinkedBlockingQueue<Integer> collectedTokens;
+    private Integer mostRecentToken;
     private ExecutorService executorService;
 
     private final byte[] centralBuffer;
@@ -34,12 +34,13 @@ public class SocketReceiverConnection implements ReceiverConnection, AutoCloseab
     public SocketReceiverConnection(String myServerURL, ExchangeSpec spec) {
         this.centralBuffer = new byte[4096];
         try {
+            this.mostRecentToken = null;
             this.serverURL = new URL(myServerURL);
             this.spec = spec;
             this.serverSocket = new ServerSocket(this.serverURL.getPort(), 1000, InetAddress.getByName(this.serverURL.getHost()));
             this.collectedCommands = new LinkedBlockingQueue<>();
             this.collectedTokens = new LinkedBlockingQueue<>();
-            this.executorService = Executors.newSingleThreadExecutor((r) -> {
+            this.executorService = Executors.newCachedThreadPool((r) -> {
                 Thread t = new Thread(r, "HydraTCP-exec-" + System.currentTimeMillis());
                 t.setDaemon(true);
                 return t;
@@ -145,7 +146,7 @@ public class SocketReceiverConnection implements ReceiverConnection, AutoCloseab
 //    }
 
     @Override
-    public Token receiveToken(int timeout) {
+    public Integer receiveToken(int timeout) {
         try {
             return this.collectedTokens.poll(timeout, TimeUnit.MILLISECONDS);
         } catch (InterruptedException ex) {
@@ -176,14 +177,12 @@ public class SocketReceiverConnection implements ReceiverConnection, AutoCloseab
             return;
         }
         while (!so.isClosed()) {
-            Token t = null;
+            Integer i = null;
             Command c = null;
             try {
-                this.spec.readBuffer(is, buffer, 0, 1);
-                if (buffer[0] == this.spec.getByteMarkerFor(Token.class)) {
-                    t = Token.getToken(poolTimeout);
-                    this.spec.readBuffer(is, buffer, 1, 12);
-                    this.spec.deserializeToken(buffer, 1, t);
+                byte b = (byte) is.read();
+                if (b == this.spec.getByteMarkerFor(Integer.class)) {
+                    i = this.spec.readInt(is);
                     os.write(this.spec.getSuccessByte());
                     os.flush();
                 } else if (buffer[0] == this.spec.getByteMarkerFor(Command.class)) {
@@ -191,6 +190,7 @@ public class SocketReceiverConnection implements ReceiverConnection, AutoCloseab
                     this.spec.readBuffer(is, buffer, 1, 4);
                     //handle framing and command ops
                     //TODO
+                    //this will not work as of now since memory is shared
                 }
             } catch (Exception ex) {
                 ex.printStackTrace();
@@ -201,13 +201,11 @@ public class SocketReceiverConnection implements ReceiverConnection, AutoCloseab
                 }
             }
             //do all the additions here
-            if (t != null) {
-                this.collectedTokens.add(t);
-                t = null;
+            if (i != null) {
+                this.collectedTokens.add(i);
             }
             if (c != null) {
                 this.collectedCommands.add(c);
-                c = null;
             }
         }
     }
