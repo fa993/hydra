@@ -16,6 +16,8 @@ import java.net.URL;
 
 public class SocketTransmitterConnection implements TransmitterConnection {
 
+    private static final int MAX_WAIT_TIME = 5000;
+
     private static final Logger logger = LoggerFactory.getLogger(SocketTransmitterConnection.class);
 
     private final String myServer;
@@ -54,8 +56,8 @@ public class SocketTransmitterConnection implements TransmitterConnection {
                 if (operate != null) {
                     operate.close();
                 }
-            } catch (IOException ioException) {
-                ioException.printStackTrace();
+            } catch (IOException ex) {
+                ex.printStackTrace();
             }
             return false;
         }
@@ -83,6 +85,7 @@ public class SocketTransmitterConnection implements TransmitterConnection {
             //TODO
         }
         os.flush();
+        socket.setSoTimeout(MAX_WAIT_TIME);
         return this.spec.getSuccessByte() == ((byte) is.read());
     }
 
